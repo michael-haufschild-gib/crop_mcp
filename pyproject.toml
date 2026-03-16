@@ -1,0 +1,70 @@
+[project]
+name = "vision-tools-mcp"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = ["mcp[cli]", "Pillow", "numpy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    # Core
+    "F",      # pyflakes — unused imports, undefined names, shadowing
+    "E",      # pycodestyle errors — whitespace, indentation, syntax style
+    "W",      # pycodestyle warnings — trailing whitespace, blank lines
+
+    # Imports
+    "I",      # isort — import ordering and grouping
+    "TCH",    # flake8-type-checking — move type-only imports behind TYPE_CHECKING
+
+    # Naming
+    "N",      # pep8-naming — class, function, variable naming conventions
+
+    # Modernization
+    "UP",     # pyupgrade — enforce modern Python syntax for target version
+
+    # Bug prevention
+    "B",      # flake8-bugbear — common bugs and design problems
+    "A",      # flake8-builtins — shadowing Python builtins
+    "PIE",    # flake8-pie — unnecessary code patterns
+    "RSE",    # flake8-raise — unnecessary exception parentheses/args
+    "RUF",    # ruff-specific — ambiguous characters, unused noqa, mutable defaults
+
+    # Complexity
+    "C90",    # mccabe — cyclomatic complexity per function
+    "C4",     # flake8-comprehensions — unnecessary list/dict/set comprehension wrappers
+    "PLR",    # pylint refactoring — too many statements/branches/args/returns
+    "PLE",    # pylint errors — bad string format, invalid all
+    "PLW",    # pylint warnings — unreachable code, dangerous defaults
+
+    # Simplification
+    "SIM",    # flake8-simplify — collapsible ifs, dict.get, ternaries
+    "RET",    # flake8-return — unnecessary else after return, assign-then-return
+    "PERF",   # perflint — performance anti-patterns (unnecessary list(), etc.)
+
+    # Code hygiene
+    "ERA",    # eradicate — commented-out code
+    "T20",    # flake8-print — no print() in library code
+
+    # Pathlib
+    "PTH",    # flake8-use-pathlib — use Path instead of os.path
+]
+
+[tool.ruff.lint.per-file-ignores]
+# server.py: print() for self-test/diagnostics, magic values in test assertions
+"server.py" = ["T20", "PLR2004"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-statements = 40
+max-branches = 10
+max-args = 7
+max-returns = 6
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

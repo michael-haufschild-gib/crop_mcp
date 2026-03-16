@@ -5,10 +5,12 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from .crop import SUPPORTED_EXTENSIONS, validate_image_path, validate_coordinates
+from .crop import validate_coordinates, validate_image_path
 
 # Maximum dimension for color analysis (larger images are downsampled)
 MAX_ANALYSIS_DIM = 200
+MIN_COLORS = 1
+MAX_COLORS = 20
 
 
 def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray, np.ndarray]:
@@ -55,9 +57,7 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
     # Iterate
     for _ in range(max_iter):
         # Assign each pixel to nearest center
-        dists = np.sum(
-            (pixels[:, None, :].astype(np.float64) - centers[None, :, :]) ** 2, axis=2
-        )
+        dists = np.sum((pixels[:, None, :].astype(np.float64) - centers[None, :, :]) ** 2, axis=2)
         labels = np.argmin(dists, axis=1)
 
         # Update centers
@@ -77,6 +77,74 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
         centers = new_centers
 
     return centers, labels
+
+
+def _validate_region(
+    x1: float | None,
+    y1: float | None,
+    x2: float | None,
+    y2: float | None,
+) -> bool:
+    """Validate optional region coordinates. Returns True if region is specified.
+
+    Raises ValueError if coordinates are partially provided.
+    """
+    region_coords = [x1, y1, x2, y2]
+    some_provided = any(c is not None for c in region_coords)
+    all_provided = all(c is not None for c in region_coords)
+
+    if some_provided and not all_provided:
+        missing = [
+            name for name, val in [("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)] if val is None
+        ]
+        raise ValueError(
+            f"Incomplete region: {', '.join(missing)} not provided.\n"
+            f"Either provide all four coordinates (x1, y1, x2, y2) to analyze a region,\n"
+            f"or omit all four to analyze the full image."
+        )
+
+    if all_provided:
+        validate_coordinates(x1, y1, x2, y2)
+
+    return all_provided
+
+
+def _crop_to_region(
+    img: Image.Image,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> tuple[Image.Image, str]:
+    """Crop image to normalized region. Returns (cropped_image, region_description)."""
+    w, h = img.size
+    cropped = img.crop((int(x1 * w), int(y1 * h), int(x2 * w), int(y2 * h)))
+    return cropped, f"({x1:.2f}, {y1:.2f}) to ({x2:.2f}, {y2:.2f})"
+
+
+def _centers_to_color_list(
+    centers: np.ndarray,
+    labels: np.ndarray,
+) -> list[dict]:
+    """Convert k-means centers and labels to sorted color result list."""
+    total = len(labels)
+    results = []
+    for i in range(len(centers)):
+        count = int(np.sum(labels == i))
+        if count == 0:
+            continue
+        r = max(0, min(255, round(centers[i][0])))
+        g = max(0, min(255, round(centers[i][1])))
+        b = max(0, min(255, round(centers[i][2])))
+        results.append(
+            {
+                "hex": f"#{r:02X}{g:02X}{b:02X}",
+                "percentage": round(count / total * 100, 1),
+                "rgb": [r, g, b],
+            }
+        )
+    results.sort(key=lambda c: c["percentage"], reverse=True)
+    return results
 
 
 def extract_colors(
@@ -99,99 +167,46 @@ def extract_colors(
     """
     path = validate_image_path(image_path)
 
-    # Validate n_colors
-    if not isinstance(n_colors, int) or n_colors < 1:
+    if not isinstance(n_colors, int) or n_colors < MIN_COLORS:
         raise ValueError(
             f"n_colors must be a positive integer, got {n_colors}.\n"
             f"Typical values: 3-10. Default is 6."
         )
-    if n_colors > 20:
+    if n_colors > MAX_COLORS:
         raise ValueError(
-            f"n_colors = {n_colors} is too high. Maximum is 20.\n"
+            f"n_colors = {n_colors} is too high. Maximum is {MAX_COLORS}.\n"
             f"Most images have 3-8 dominant colors. Try n_colors=6."
         )
 
-    # Validate region coordinates if any are provided
-    region_coords = [x1, y1, x2, y2]
-    some_provided = any(c is not None for c in region_coords)
-    all_provided = all(c is not None for c in region_coords)
+    has_region = _validate_region(x1, y1, x2, y2)
 
-    if some_provided and not all_provided:
-        missing = []
-        for name, val in [("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)]:
-            if val is None:
-                missing.append(name)
-        raise ValueError(
-            f"Incomplete region: {', '.join(missing)} not provided.\n"
-            f"Either provide all four coordinates (x1, y1, x2, y2) to analyze a region,\n"
-            f"or omit all four to analyze the full image."
-        )
-
-    if all_provided:
-        validate_coordinates(x1, y1, x2, y2)
-
-    # Open image
     try:
         img = Image.open(path)
     except Exception as e:
-        raise ValueError(f"Could not open image: {path}\nError: {e}")
+        raise ValueError(f"Could not open image: {path}\nError: {e}") from e
 
-    # Convert to RGB (drop alpha, handle palette images)
     img = img.convert("RGB")
-    full_size = img.size  # (width, height)
+    full_size = img.size
 
-    # Crop to region if specified
-    if all_provided:
-        w, h = img.size
-        px_x1 = int(x1 * w)
-        px_y1 = int(y1 * h)
-        px_x2 = int(x2 * w)
-        px_y2 = int(y2 * h)
-        img = img.crop((px_x1, px_y1, px_x2, px_y2))
-        region_str = f"({x1:.2f}, {y1:.2f}) to ({x2:.2f}, {y2:.2f})"
+    if has_region:
+        img, region_str = _crop_to_region(img, x1, y1, x2, y2)
     else:
         region_str = "full image"
 
-    # Ensure we have pixels to work with
     if img.size[0] < 1 or img.size[1] < 1:
         raise ValueError(
             f"Region is too small ({img.size[0]}x{img.size[1]} pixels).\n"
             f"Try a larger region or the full image."
         )
 
-    # Downsample for performance (color clustering doesn't need full resolution)
     if img.size[0] > MAX_ANALYSIS_DIM or img.size[1] > MAX_ANALYSIS_DIM:
         img.thumbnail((MAX_ANALYSIS_DIM, MAX_ANALYSIS_DIM), Image.LANCZOS)
 
-    # Convert to numpy array and reshape to (N, 3)
     pixels = np.array(img).reshape(-1, 3)
-
-    # Run k-means
     centers, labels = _kmeans(pixels, n_colors)
 
-    # Count pixels per cluster and compute percentages
-    total = len(labels)
-    results = []
-    for i in range(len(centers)):
-        count = int(np.sum(labels == i))
-        if count == 0:
-            continue
-        r, g, b = int(round(centers[i][0])), int(round(centers[i][1])), int(round(centers[i][2]))
-        # Clamp to valid range
-        r, g, b = max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b))
-        hex_val = f"#{r:02X}{g:02X}{b:02X}"
-        percentage = round(count / total * 100, 1)
-        results.append({
-            "hex": hex_val,
-            "percentage": percentage,
-            "rgb": [r, g, b],
-        })
-
-    # Sort by percentage descending
-    results.sort(key=lambda c: c["percentage"], reverse=True)
-
     return {
-        "colors": results,
+        "colors": _centers_to_color_list(centers, labels),
         "image_size": list(full_size),
         "region_analyzed": region_str,
     }

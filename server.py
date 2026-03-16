@@ -57,20 +57,20 @@ def _auto_setup() -> bool:
     if not SETUP_SCRIPT.exists():
         return False
 
-    print(f"[vision-tools] First run — setting up virtualenv...", file=sys.stderr)
+    print("[vision-tools] First run — setting up virtualenv...", file=sys.stderr)
     try:
         result = subprocess.run(
             ["bash", str(SETUP_SCRIPT)],
             capture_output=True,
             text=True,
             timeout=120,
+            check=False,
         )
         if result.returncode == 0:
-            print(f"[vision-tools] Setup complete!", file=sys.stderr)
+            print("[vision-tools] Setup complete!", file=sys.stderr)
             return True
-        else:
-            print(f"[vision-tools] Setup failed:\n{result.stderr}", file=sys.stderr)
-            return False
+        print(f"[vision-tools] Setup failed:\n{result.stderr}", file=sys.stderr)
+        return False
     except Exception as e:
         print(f"[vision-tools] Setup error: {e}", file=sys.stderr)
         return False
@@ -85,13 +85,14 @@ def _relaunch_in_venv() -> None:
         return
 
     # Re-exec with venv python
-    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON)] + sys.argv)
+    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), *sys.argv])
 
 
 def _run_self_test() -> None:
     """Quick self-test: create a test image, crop it, extract colors."""
-    from PIL import Image
     import tempfile
+
+    from PIL import Image
 
     print("Running self-test...")
 
@@ -105,18 +106,38 @@ def _run_self_test() -> None:
                 img.putpixel((x, y), (0, 0, 255))
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        test_path = os.path.join(tmpdir, "test.png")
+        test_path = str(Path(tmpdir) / "test.png")
         img.save(test_path)
 
+        # Test image_info
+        from tools.crop import crop_image, image_info
+
+        info = image_info(test_path)
+        print(f"  image_info: {info['width']}x{info['height']}, ratio={info['aspect_ratio']}")
+        assert info["width"] == 200, f"Expected width 200, got {info['width']}"
+        assert info["height"] == 100, f"Expected height 100, got {info['height']}"
+        assert info["aspect_ratio"] == 2.0, f"Expected ratio 2.0, got {info['aspect_ratio']}"
+        assert "grid_image" in info, "Missing grid_image in image_info result"
+        assert Path(info["grid_image"]).exists(), f"Grid image not found: {info['grid_image']}"
+        print(f"  grid_image: {info['grid_image']}")
+
         # Test crop
-        from tools.crop import crop_image
         result = crop_image(test_path, 0.0, 0.0, 0.5, 1.0, padding=0)
         print(f"  crop_image: {result['width']}x{result['height']} -> {result['output_path']}")
         assert result["width"] == 100, f"Expected width 100, got {result['width']}"
         assert result["height"] == 100, f"Expected height 100, got {result['height']}"
+        assert result["source_width"] == 200, (
+            f"Expected source_width 200, got {result['source_width']}"
+        )
+        assert result["source_height"] == 100, (
+            f"Expected source_height 100, got {result['source_height']}"
+        )
+        assert "crop_region_px" in result, "Missing crop_region_px in result"
+        assert "crop_region_normalized" in result, "Missing crop_region_normalized in result"
 
         # Test colors
         from tools.colors import extract_colors
+
         result = extract_colors(test_path, n_colors=2)
         print(f"  extract_colors: {len(result['colors'])} colors found")
         hexes = {c["hex"] for c in result["colors"]}
@@ -126,53 +147,67 @@ def _run_self_test() -> None:
     print("All tests passed!")
 
 
-def main() -> None:
-    # Handle --setup flag
-    if "--setup" in sys.argv:
-        if SETUP_SCRIPT.exists():
-            os.execv("/bin/bash", ["/bin/bash", str(SETUP_SCRIPT)])
-        else:
-            print(f"Setup script not found: {SETUP_SCRIPT}", file=sys.stderr)
-            sys.exit(1)
-
-    # Try to relaunch in venv if needed
+def _ensure_dependencies() -> None:
+    """Ensure venv exists and dependencies are installed. Exits on failure."""
     _relaunch_in_venv()
 
-    # Auto-setup on first run
     if _check_dependencies():
         if _auto_setup():
-            # Re-launch after setup
             _relaunch_in_venv()
 
-        # Still missing? Show error
         err = _check_dependencies()
         if err:
             print(f"[vision-tools] {err}", file=sys.stderr)
             sys.exit(1)
 
-    # Handle --test flag (after deps are confirmed)
-    if "--test" in sys.argv:
-        _run_self_test()
-        return
 
-    # --- Start MCP Server ---
+def _start_server() -> None:
+    """Register MCP tools and start the stdio server."""
     from mcp.server.fastmcp import FastMCP
 
-    from tools.crop import crop_image as _crop_image
     from tools.colors import extract_colors as _extract_colors
+    from tools.crop import crop_image as _crop_image
+    from tools.crop import image_info as _image_info
 
-    mcp = FastMCP(
-        name="vision-tools",
+    mcp_server = FastMCP(name="vision-tools")
+
+    @mcp_server.tool(
+        name="image_info",
+        description=(
+            "Get image dimensions and a coordinate-reference grid overlay for "
+            "planning crops. Returns metadata and grid_image — a copy with "
+            "labeled gridlines (.1 through .9). Read the grid_image to see where "
+            "normalized coordinates fall before cropping. On tall/wide images, "
+            "errors on the longer axis displace more pixels."
+        ),
     )
+    def image_info(image_path: str) -> str:
+        """Get image dimensions and metadata.
 
-    @mcp.tool(
+        Args:
+            image_path: Absolute path to the image file.
+        """
+        try:
+            result = _image_info(image_path=image_path)
+            return json.dumps(result)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            return json.dumps({"error": f"Unexpected error: {e}"})
+
+    @mcp_server.tool(
         name="crop_image",
         description=(
-            "Crop a region from a screenshot or image and save it as a new file. "
-            "Use this to zoom into a specific area for closer inspection — e.g. a button, "
-            "a text block, or a UI component. Coordinates are normalized 0-1 where (0,0) is "
-            "the top-left and (1,1) is the bottom-right. Returns the path to the cropped image, "
-            "which you can then read to inspect the region in detail."
+            "Crop a region from a screenshot or image and save it as a new "
+            "file. Use this as a magnifying glass when you cannot clearly read "
+            "text, distinguish UI elements, or verify visual details in an "
+            "image — crop the area and read the result for a closer look. Also "
+            "use when a user asks you to crop. Coordinates are normalized 0-1 "
+            "where (0,0) is top-left and (1,1) is bottom-right. Returns the "
+            "cropped image path plus source dimensions and the exact "
+            "pixel/normalized region that was cropped (accounting for padding), "
+            "so you can refine with a second crop if needed. Call image_info "
+            "first to read its grid_image for accurate coordinates."
         ),
     )
     def crop_image(
@@ -188,17 +223,20 @@ def main() -> None:
 
         Args:
             image_path: Absolute path to the source image file.
-            x1: Left edge of crop region (0.0 = left side, 1.0 = right side).
+            x1: Left edge of crop region (0.0 = left, 1.0 = right).
             y1: Top edge of crop region (0.0 = top, 1.0 = bottom).
-            x2: Right edge of crop region. Must be greater than x1.
-            y2: Bottom edge of crop region. Must be greater than y1.
-            output_path: Where to save the cropped image. Optional — defaults to a generated path next to the source.
-            padding: Extra pixels to include around the crop region. Default: 20.
+            x2: Right edge of crop region. Must be > x1.
+            y2: Bottom edge of crop region. Must be > y1.
+            output_path: Where to save. Defaults to a path next to source.
+            padding: Extra pixels around the crop region. Default: 20.
         """
         try:
             result = _crop_image(
                 image_path=image_path,
-                x1=x1, y1=y1, x2=x2, y2=y2,
+                x1=x1,
+                y1=y1,
+                x2=x2,
+                y2=y2,
                 output_path=output_path,
                 padding=padding,
             )
@@ -208,14 +246,14 @@ def main() -> None:
         except Exception as e:
             return json.dumps({"error": f"Unexpected error: {e}"})
 
-    @mcp.tool(
+    @mcp_server.tool(
         name="extract_colors",
         description=(
-            "Extract the dominant colors from an image or a region of an image as exact hex values. "
-            "Use this when you need precise CSS color codes from a screenshot, design mockup, or "
-            "reference image — do NOT guess hex values from visual inspection. "
-            "Optionally specify a region using normalized 0-1 coordinates to analyze only part of "
-            "the image (e.g. just a header bar or a button). Returns hex codes, RGB values, and "
+            "Extract dominant colors from an image or image region as exact "
+            "hex values. Use when you need precise CSS color codes from a "
+            "screenshot, design mockup, or reference image — do NOT guess hex "
+            "values from visual inspection. Optionally specify a region using "
+            "normalized 0-1 coordinates. Returns hex codes, RGB values, and "
             "the percentage of the image each color occupies."
         ),
     )
@@ -231,8 +269,8 @@ def main() -> None:
 
         Args:
             image_path: Absolute path to the source image file.
-            n_colors: Number of dominant colors to extract. Default: 6. Range: 1-20.
-            x1: Left edge of region to analyze (0.0-1.0). Omit all four coords to analyze full image.
+            n_colors: Dominant colors to extract. Default: 6. Range: 1-20.
+            x1: Left edge of region (0.0-1.0). Omit all four for full image.
             y1: Top edge of region (0.0-1.0).
             x2: Right edge of region (0.0-1.0).
             y2: Bottom edge of region (0.0-1.0).
@@ -241,7 +279,10 @@ def main() -> None:
             result = _extract_colors(
                 image_path=image_path,
                 n_colors=n_colors,
-                x1=x1, y1=y1, x2=x2, y2=y2,
+                x1=x1,
+                y1=y1,
+                x2=x2,
+                y2=y2,
             )
             return json.dumps(result)
         except ValueError as e:
@@ -249,8 +290,24 @@ def main() -> None:
         except Exception as e:
             return json.dumps({"error": f"Unexpected error: {e}"})
 
-    # Run with stdio transport
-    mcp.run(transport="stdio")
+    mcp_server.run(transport="stdio")
+
+
+def main() -> None:
+    if "--setup" in sys.argv:
+        if SETUP_SCRIPT.exists():
+            os.execv("/bin/bash", ["/bin/bash", str(SETUP_SCRIPT)])
+        else:
+            print(f"Setup script not found: {SETUP_SCRIPT}", file=sys.stderr)
+            sys.exit(1)
+
+    _ensure_dependencies()
+
+    if "--test" in sys.argv:
+        _run_self_test()
+        return
+
+    _start_server()
 
 
 if __name__ == "__main__":

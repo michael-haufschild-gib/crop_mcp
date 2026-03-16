@@ -172,7 +172,7 @@ def _start_server() -> None:
     mcp_server = FastMCP(name="vision-tools")
 
     @mcp_server.tool(
-        name="image_info",
+        name="get_image_coordinates_grid",
         description=(
             "Get image dimensions and a coordinate-reference grid overlay for "
             "planning crops. Returns metadata and grid_image — a copy with "
@@ -196,7 +196,7 @@ def _start_server() -> None:
             return json.dumps({"error": f"Unexpected error: {e}"})
 
     @mcp_server.tool(
-        name="crop_image",
+        name="crop_to_magnify_image",
         description=(
             "Crop a region from a screenshot or image and save it as a new "
             "file. Use this as a magnifying glass when you cannot clearly read "

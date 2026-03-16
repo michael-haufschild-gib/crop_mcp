@@ -11,9 +11,19 @@ claude mcp add --transport stdio --scope user vision-tools -- ~/.vision-tools-en
 
 ## Tools
 
-**crop_image** — Crop a region using normalized 0-1 coordinates. Returns the saved crop path.
+**crop_to_magnify_image** — Crop a region using normalized 0-1 coordinates to magnify and inspect details. Returns the saved crop path.
 
 **extract_colors** — Extract dominant colors as hex values using k-means clustering. No more guessing colors from screenshots.
+
+## Awareness Rule
+
+For Claude to proactively use these tools (not just when explicitly asked), copy the awareness rule into your global Claude Code rules:
+
+```bash
+cp .claude/rules/vision-tools-awareness.md ~/.claude/rules/
+```
+
+This plants a lightweight reminder — Claude will remember the tools exist when analyzing screenshots, without being forced to use them every time.
 
 ## Requirements
 

@@ -10,10 +10,20 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+_log = logging.getLogger("vision-tools")
 
 VENV_DIR = Path.home() / ".vision-tools-env"
 VENV_PYTHON = VENV_DIR / "bin" / "python3"
@@ -57,7 +67,7 @@ def _auto_setup() -> bool:
     if not SETUP_SCRIPT.exists():
         return False
 
-    print("[vision-tools] First run — setting up virtualenv...", file=sys.stderr)
+    _log.info("First run — setting up virtualenv...")
     try:
         result = subprocess.run(
             ["bash", str(SETUP_SCRIPT)],
@@ -67,12 +77,12 @@ def _auto_setup() -> bool:
             check=False,
         )
         if result.returncode == 0:
-            print("[vision-tools] Setup complete!", file=sys.stderr)
+            _log.info("Setup complete!")
             return True
-        print(f"[vision-tools] Setup failed:\n{result.stderr}", file=sys.stderr)
+        _log.error("Setup failed:\n%s", result.stderr)
         return False
     except Exception as e:
-        print(f"[vision-tools] Setup error: {e}", file=sys.stderr)
+        _log.error("Setup error: %s", e)
         return False
 
 
@@ -98,12 +108,8 @@ def _run_self_test() -> None:
 
     # Create a test image: left half red, right half blue
     img = Image.new("RGB", (200, 100))
-    for x in range(200):
-        for y in range(100):
-            if x < 100:
-                img.putpixel((x, y), (255, 0, 0))
-            else:
-                img.putpixel((x, y), (0, 0, 255))
+    img.paste(Image.new("RGB", (100, 100), (255, 0, 0)), (0, 0))
+    img.paste(Image.new("RGB", (100, 100), (0, 0, 255)), (100, 0))
 
     with tempfile.TemporaryDirectory() as tmpdir:
         test_path = str(Path(tmpdir) / "test.png")
@@ -157,7 +163,7 @@ def _ensure_dependencies() -> None:
 
         err = _check_dependencies()
         if err:
-            print(f"[vision-tools] {err}", file=sys.stderr)
+            _log.error("%s", err)
             sys.exit(1)
 
 
@@ -171,7 +177,7 @@ def _start_server() -> None:
 
     mcp_server = FastMCP(name="vision-tools")
 
-    @mcp_server.tool(
+    @mcp_server.tool(  # type: ignore[untyped-decorator]
         name="get_image_coordinates_grid",
         description=(
             "Get image dimensions and a coordinate-reference grid overlay for "
@@ -187,15 +193,20 @@ def _start_server() -> None:
         Args:
             image_path: Absolute path to the image file.
         """
+        _log.info("tool=get_image_coordinates_grid path=%s", image_path)
+        t0 = time.monotonic()
         try:
             result = _image_info(image_path=image_path)
+            _log.info("tool=get_image_coordinates_grid duration=%.3fs", time.monotonic() - t0)
             return json.dumps(result)
         except ValueError as e:
+            _log.error("tool=get_image_coordinates_grid error=%s", e)
             return json.dumps({"error": str(e)})
         except Exception as e:
+            _log.error("tool=get_image_coordinates_grid error=%s", e)
             return json.dumps({"error": f"Unexpected error: {e}"})
 
-    @mcp_server.tool(
+    @mcp_server.tool(  # type: ignore[untyped-decorator]
         name="crop_to_magnify_image",
         description=(
             "Crop a region from a screenshot or image and save it as a new "
@@ -230,6 +241,15 @@ def _start_server() -> None:
             output_path: Where to save. Defaults to a path next to source.
             padding: Extra pixels around the crop region. Default: 20.
         """
+        _log.info(
+            "tool=crop_to_magnify_image path=%s region=(%.2f,%.2f)-(%.2f,%.2f)",
+            image_path,
+            x1,
+            y1,
+            x2,
+            y2,
+        )
+        t0 = time.monotonic()
         try:
             result = _crop_image(
                 image_path=image_path,
@@ -240,13 +260,16 @@ def _start_server() -> None:
                 output_path=output_path,
                 padding=padding,
             )
+            _log.info("tool=crop_to_magnify_image duration=%.3fs", time.monotonic() - t0)
             return json.dumps(result)
         except ValueError as e:
+            _log.error("tool=crop_to_magnify_image error=%s", e)
             return json.dumps({"error": str(e)})
         except Exception as e:
+            _log.error("tool=crop_to_magnify_image error=%s", e)
             return json.dumps({"error": f"Unexpected error: {e}"})
 
-    @mcp_server.tool(
+    @mcp_server.tool(  # type: ignore[untyped-decorator]
         name="extract_colors",
         description=(
             "Extract dominant colors from an image or image region as exact "
@@ -275,6 +298,8 @@ def _start_server() -> None:
             x2: Right edge of region (0.0-1.0).
             y2: Bottom edge of region (0.0-1.0).
         """
+        _log.info("tool=extract_colors path=%s n_colors=%d", image_path, n_colors)
+        t0 = time.monotonic()
         try:
             result = _extract_colors(
                 image_path=image_path,
@@ -284,10 +309,13 @@ def _start_server() -> None:
                 x2=x2,
                 y2=y2,
             )
+            _log.info("tool=extract_colors duration=%.3fs", time.monotonic() - t0)
             return json.dumps(result)
         except ValueError as e:
+            _log.error("tool=extract_colors error=%s", e)
             return json.dumps({"error": str(e)})
         except Exception as e:
+            _log.error("tool=extract_colors error=%s", e)
             return json.dumps({"error": f"Unexpected error: {e}"})
 
     mcp_server.run(transport="stdio")
@@ -298,7 +326,7 @@ def main() -> None:
         if SETUP_SCRIPT.exists():
             os.execv("/bin/bash", ["/bin/bash", str(SETUP_SCRIPT)])
         else:
-            print(f"Setup script not found: {SETUP_SCRIPT}", file=sys.stderr)
+            _log.error("Setup script not found: %s", SETUP_SCRIPT)
             sys.exit(1)
 
     _ensure_dependencies()

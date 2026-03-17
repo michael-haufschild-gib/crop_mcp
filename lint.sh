@@ -4,6 +4,8 @@ set -euo pipefail
 
 VENV_DIR="$HOME/.vision-tools-env"
 RUFF="$VENV_DIR/bin/ruff"
+MYPY="$VENV_DIR/bin/mypy"
+PYTEST="$VENV_DIR/bin/pytest"
 MAX_LINES=750
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -13,10 +15,10 @@ NC='\033[0m'
 
 fail=0
 
-# --- Ensure ruff is installed ---
-if [ ! -f "$RUFF" ]; then
-    echo "Installing ruff..."
-    "$VENV_DIR/bin/pip3" install ruff --quiet
+# --- Verify tools are installed ---
+if [ ! -f "$RUFF" ] || [ ! -f "$MYPY" ] || [ ! -f "$PYTEST" ]; then
+    echo -e "${RED}Dev tools missing. Run: bash setup.sh${NC}"
+    exit 1
 fi
 
 cd "$SCRIPT_DIR"
@@ -56,6 +58,36 @@ done
 if [ "$over_limit" -eq 0 ]; then
     echo -e "${GREEN}file length: all files under $MAX_LINES lines${NC}"
 else
+    fail=1
+fi
+
+echo ""
+
+# --- Mypy ---
+echo "=== mypy ==="
+if [ -f "$MYPY" ]; then
+    if "$MYPY" .; then
+        echo -e "${GREEN}mypy: passed${NC}"
+    else
+        fail=1
+    fi
+else
+    echo -e "${RED}mypy not installed. Run: bash setup.sh${NC}"
+    fail=1
+fi
+
+echo ""
+
+# --- Pytest ---
+echo "=== pytest ==="
+if [ -f "$PYTEST" ]; then
+    if "$PYTEST" --tb=short -q; then
+        echo -e "${GREEN}pytest: passed${NC}"
+    else
+        fail=1
+    fi
+else
+    echo -e "${RED}pytest not installed. Run: bash setup.sh${NC}"
     fail=1
 fi
 

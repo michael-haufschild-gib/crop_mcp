@@ -4,6 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.9"
 dependencies = ["mcp[cli]", "Pillow", "numpy"]
 
+[project.optional-dependencies]
+dev = ["pytest", "mypy", "ruff", "types-Pillow"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py39"
@@ -53,8 +56,10 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# server.py: print() for self-test/diagnostics, magic values in test assertions
-"server.py" = ["T20", "PLR2004"]
+# server.py: print() in self-test, magic values in assertions, statement count in wiring function
+"server.py" = ["T20", "PLR2004", "PLR0915"]
+# tests: magic values in assertions, runtime Path import, regex match patterns
+"tests/*.py" = ["PLR2004", "TC003", "RUF043"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -68,3 +73,32 @@ max-returns = 6
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "numpy.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mcp.*"
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "_pytest.*"
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "pytest.*"
+follow_imports = "skip"

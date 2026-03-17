@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from PIL import Image
 
-from .crop import validate_coordinates, validate_image_path
+from .validators import validate_coordinates, validate_image_path
 
 # Maximum dimension for color analysis (larger images are downsampled)
 MAX_ANALYSIS_DIM = 200
@@ -23,8 +25,17 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
 
     Returns:
         (centers, labels) — cluster centers (k, 3) and per-pixel labels (N,).
+
+    Performance:
+        Memory is O(N * k * 3) float64 for the distance matrix each iteration
+        plus O(N * 3) float64 for the pre-converted pixel array.
+        At MAX_ANALYSIS_DIM=200 (40K pixels) and MAX_COLORS=20: ~18 MB per iteration.
+        Callers must thumbnail images to MAX_ANALYSIS_DIM before calling this function.
     """
     n = pixels.shape[0]
+
+    # Convert once — avoid repeated astype(float64) in hot loops
+    pixels_f: np.ndarray = pixels.astype(np.float64)
 
     # Clamp k to available unique colors
     unique_colors = np.unique(pixels, axis=0)
@@ -41,40 +52,48 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
     # Initialize centers using k-means++ for better convergence
     rng = np.random.default_rng(42)
     centers = np.empty((k, 3), dtype=np.float64)
-    centers[0] = pixels[rng.integers(n)].astype(np.float64)
+    centers[0] = pixels_f[rng.integers(n)]
 
     for i in range(1, k):
         # Distance from each point to nearest existing center
         dists = np.min(
-            np.sum((pixels[:, None, :].astype(np.float64) - centers[None, :i, :]) ** 2, axis=2),
+            np.sum((pixels_f[:, None, :] - centers[None, :i, :]) ** 2, axis=2),
             axis=1,
         )
         # Probability proportional to distance squared
-        probs = dists / dists.sum()
-        idx = rng.choice(n, p=probs)
-        centers[i] = pixels[idx].astype(np.float64)
+        total_dist = dists.sum()
+        if total_dist == 0:
+            idx = rng.integers(n)
+        else:
+            probs = dists / total_dist
+            idx = rng.choice(n, p=probs)
+        centers[i] = pixels_f[idx]
 
     # Iterate
     for _ in range(max_iter):
         # Assign each pixel to nearest center
-        dists = np.sum((pixels[:, None, :].astype(np.float64) - centers[None, :, :]) ** 2, axis=2)
+        dists = np.sum((pixels_f[:, None, :] - centers[None, :, :]) ** 2, axis=2)
         labels = np.argmin(dists, axis=1)
 
         # Update centers
         new_centers = np.empty_like(centers)
         for i in range(k):
-            members = pixels[labels == i]
+            members = pixels_f[labels == i]
             if len(members) > 0:
                 new_centers[i] = members.mean(axis=0)
             else:
                 # Empty cluster — reinitialize randomly
-                new_centers[i] = pixels[rng.integers(n)].astype(np.float64)
+                new_centers[i] = pixels_f[rng.integers(n)]
 
         # Check convergence
         if np.allclose(centers, new_centers, atol=1.0):
             centers = new_centers
             break
         centers = new_centers
+
+    # Recompute labels against final centers so they're consistent
+    dists = np.sum((pixels_f[:, None, :] - centers[None, :, :]) ** 2, axis=2)
+    labels = np.argmin(dists, axis=1)
 
     return centers, labels
 
@@ -84,10 +103,14 @@ def _validate_region(
     y1: float | None,
     x2: float | None,
     y2: float | None,
-) -> bool:
-    """Validate optional region coordinates. Returns True if region is specified.
+) -> tuple[float, float, float, float] | None:
+    """Validate optional region coordinates.
 
-    Raises ValueError if coordinates are partially provided.
+    Returns:
+        The four coordinates as a tuple if all are provided, or None if all are omitted.
+
+    Raises:
+        ValueError: If coordinates are partially provided or out of range.
     """
     region_coords = [x1, y1, x2, y2]
     some_provided = any(c is not None for c in region_coords)
@@ -103,10 +126,11 @@ def _validate_region(
             f"or omit all four to analyze the full image."
         )
 
-    if all_provided:
+    if all_provided and x1 is not None and y1 is not None and x2 is not None and y2 is not None:
         validate_coordinates(x1, y1, x2, y2)
+        return (x1, y1, x2, y2)
 
-    return all_provided
+    return None
 
 
 def _crop_to_region(
@@ -125,17 +149,17 @@ def _crop_to_region(
 def _centers_to_color_list(
     centers: np.ndarray,
     labels: np.ndarray,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Convert k-means centers and labels to sorted color result list."""
     total = len(labels)
-    results = []
-    for i in range(len(centers)):
+    results: list[dict[str, Any]] = []
+    for i, center in enumerate(centers):
         count = int(np.sum(labels == i))
         if count == 0:
             continue
-        r = max(0, min(255, round(centers[i][0])))
-        g = max(0, min(255, round(centers[i][1])))
-        b = max(0, min(255, round(centers[i][2])))
+        r = max(0, min(255, round(float(center[0]))))
+        g = max(0, min(255, round(float(center[1]))))
+        b = max(0, min(255, round(float(center[2]))))
         results.append(
             {
                 "hex": f"#{r:02X}{g:02X}{b:02X}",
@@ -143,7 +167,7 @@ def _centers_to_color_list(
                 "rgb": [r, g, b],
             }
         )
-    results.sort(key=lambda c: c["percentage"], reverse=True)
+    results.sort(key=lambda c: float(c["percentage"]), reverse=True)
     return results
 
 
@@ -154,7 +178,7 @@ def extract_colors(
     y1: float | None = None,
     x2: float | None = None,
     y2: float | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Extract dominant colors from an image or image region.
 
     Args:
@@ -178,7 +202,7 @@ def extract_colors(
             f"Most images have 3-8 dominant colors. Try n_colors=6."
         )
 
-    has_region = _validate_region(x1, y1, x2, y2)
+    region = _validate_region(x1, y1, x2, y2)
 
     try:
         img = Image.open(path)
@@ -188,8 +212,8 @@ def extract_colors(
     img = img.convert("RGB")
     full_size = img.size
 
-    if has_region:
-        img, region_str = _crop_to_region(img, x1, y1, x2, y2)
+    if region is not None:
+        img, region_str = _crop_to_region(img, *region)
     else:
         region_str = "full image"
 

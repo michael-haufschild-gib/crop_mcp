@@ -78,6 +78,7 @@ PYTHON="$VENV_DIR/bin/python3"
 "$PIP" install --upgrade pip --quiet 2>/dev/null || true
 
 DEPS=("mcp[cli]" "Pillow" "numpy")
+DEV_DEPS=("pytest" "mypy" "ruff" "types-Pillow")
 MISSING=()
 
 for dep in "${DEPS[@]}"; do
@@ -101,6 +102,31 @@ else
         exit 1
     }
     info "Dependencies installed"
+fi
+
+# --- Install dev dependencies ---
+DEV_MISSING=()
+
+for dep in "${DEV_DEPS[@]}"; do
+    pkg_name=$(echo "$dep" | sed 's/\[.*\]//' | sed 's/-/_/g')
+    if ! "$PYTHON" -c "import $pkg_name" 2>/dev/null; then
+        DEV_MISSING+=("$dep")
+    fi
+done
+
+if [ ${#DEV_MISSING[@]} -eq 0 ]; then
+    info "All dev dependencies already installed"
+else
+    warn "Installing dev deps: ${DEV_MISSING[*]} ..."
+    "$PIP" install "${DEV_MISSING[@]}" --quiet || {
+        error "Failed to install dev dependencies."
+        echo ""
+        echo "  Try running manually:"
+        echo "    $PIP install ${DEV_MISSING[*]}"
+        echo ""
+        exit 1
+    }
+    info "Dev dependencies installed"
 fi
 
 # --- Verify installation ---

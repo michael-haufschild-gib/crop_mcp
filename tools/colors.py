@@ -2,17 +2,35 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TypedDict
 
 import numpy as np
 from PIL import Image
 
 from .validators import validate_coordinates, validate_image_path
 
+__all__ = ["extract_colors"]
+
 # Maximum dimension for color analysis (larger images are downsampled)
 MAX_ANALYSIS_DIM = 200
 MIN_COLORS = 1
 MAX_COLORS = 20
+
+
+class ColorEntry(TypedDict):
+    """A single dominant color with hex, percentage, and RGB values."""
+
+    hex: str
+    percentage: float
+    rgb: list[int]
+
+
+class ExtractColorsResult(TypedDict):
+    """Return type for extract_colors."""
+
+    colors: list[ColorEntry]
+    image_size: list[int]
+    region_analyzed: str
 
 
 def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray, np.ndarray]:
@@ -126,7 +144,8 @@ def _validate_region(
             f"or omit all four to analyze the full image."
         )
 
-    if all_provided and x1 is not None and y1 is not None and x2 is not None and y2 is not None:
+    # Narrow for mypy: the is-not-None checks prove all four are float
+    if x1 is not None and y1 is not None and x2 is not None and y2 is not None:
         validate_coordinates(x1, y1, x2, y2)
         return (x1, y1, x2, y2)
 
@@ -149,10 +168,10 @@ def _crop_to_region(
 def _centers_to_color_list(
     centers: np.ndarray,
     labels: np.ndarray,
-) -> list[dict[str, Any]]:
+) -> list[ColorEntry]:
     """Convert k-means centers and labels to sorted color result list."""
     total = len(labels)
-    results: list[dict[str, Any]] = []
+    results: list[ColorEntry] = []
     for i, center in enumerate(centers):
         count = int(np.sum(labels == i))
         if count == 0:
@@ -178,7 +197,7 @@ def extract_colors(
     y1: float | None = None,
     x2: float | None = None,
     y2: float | None = None,
-) -> dict[str, Any]:
+) -> ExtractColorsResult:
     """Extract dominant colors from an image or image region.
 
     Args:

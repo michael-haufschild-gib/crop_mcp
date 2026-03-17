@@ -27,3 +27,6 @@ task_state.md
 
 # Screenshots (manual test artifacts, not used by automated tests)
 screenshots/
+
+# Generated live QA images
+tests/live_qa_images/

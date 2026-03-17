@@ -30,6 +30,7 @@ MCP server providing `crop_to_magnify_image`, `get_image_coordinates_grid`, `ext
 | `make lint` | Run ruff check |
 | `make format` | Auto-format all files |
 | `make typecheck` | Run mypy (strict mode) |
-| `make smoke-test` | Quick self-test |
+| `make smoke-test` | Quick integration tests |
+| `make live-qa` | Generate images for live MCP QA (`tests/live_qa_checklist.md`) |
 | `make serve` | Start MCP server (stdio) |
 | `make clean` | Remove caches and build artifacts |

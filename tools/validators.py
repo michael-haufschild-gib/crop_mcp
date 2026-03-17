@@ -5,6 +5,13 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 
+__all__ = [
+    "SUPPORTED_EXTENSIONS",
+    "cleanup_temp_dir",
+    "validate_coordinates",
+    "validate_image_path",
+]
+
 # Supported image extensions (lowercase)
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
 

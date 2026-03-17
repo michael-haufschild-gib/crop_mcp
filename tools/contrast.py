@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import math
 import re
+from typing import TypedDict
+
+__all__ = ["check_contrast"]
 
 # sRGB linearization threshold (IEC 61966-2-1)
 _SRGB_LINEAR_THRESHOLD = 0.04045
@@ -17,6 +20,26 @@ _ACHROMATIC_THRESHOLD = 0.0002
 # --- Hex parsing ---
 
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
+
+
+class ColorInfo(TypedDict):
+    """Color with representations in multiple color spaces."""
+
+    hex: str
+    rgb: list[int]
+    hsl: list[float]
+    oklch: list[float]
+
+
+class ContrastResult(TypedDict):
+    """Return type for check_contrast."""
+
+    foreground: ColorInfo
+    background: ColorInfo
+    contrast_ratio: float
+    wcag_aa: bool
+    wcag_aaa: bool
+    verdict: str
 
 
 def _parse_hex(hex_str: str) -> tuple[int, int, int]:
@@ -209,7 +232,7 @@ def _rgb_to_oklch(r: int, g: int, b: int) -> tuple[float, float, float]:
 # --- Public API ---
 
 
-def _color_info(hex_str: str) -> dict[str, object]:
+def _color_info(hex_str: str) -> ColorInfo:
     """Build color info dict with all color space representations.
 
     Args:
@@ -238,7 +261,7 @@ def check_contrast(
     foreground: str,
     background: str,
     text_is_large: bool = False,
-) -> dict[str, object]:
+) -> ContrastResult:
     """Compute WCAG contrast ratio between two colors with color space conversions.
 
     Args:

@@ -25,8 +25,7 @@ jobs:
         run: |
           python -m venv ~/.vision-tools-env
           ~/.vision-tools-env/bin/pip install --upgrade pip
-          ~/.vision-tools-env/bin/pip install mcp[cli] Pillow numpy
-          ~/.vision-tools-env/bin/pip install pytest mypy ruff types-Pillow
+          ~/.vision-tools-env/bin/pip install -r requirements.lock
 
       - name: Lint (ruff check)
         run: ~/.vision-tools-env/bin/ruff check .
@@ -38,7 +37,7 @@ jobs:
         run: ~/.vision-tools-env/bin/mypy .
 
       - name: Test (pytest)
-        run: ~/.vision-tools-env/bin/pytest -v
+        run: ~/.vision-tools-env/bin/pytest -v --cov
 
       - name: File length check
         run: |

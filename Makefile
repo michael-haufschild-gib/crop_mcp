@@ -4,7 +4,7 @@ RUFF := $(VENV)/bin/ruff
 MYPY := $(VENV)/bin/mypy
 PYTEST := $(VENV)/bin/pytest
 
-.PHONY: setup lint format typecheck test check clean serve smoke-test
+.PHONY: setup lint format typecheck test check clean serve smoke-test live-qa
 
 ## First-time setup: create venv and install all dependencies
 setup:
@@ -24,7 +24,7 @@ typecheck:
 
 ## Run test suite
 test:
-	$(PYTEST) -v
+	$(PYTEST) -v --cov
 
 ## Run full quality pipeline: lint + format-check + typecheck + test
 check:
@@ -39,6 +39,10 @@ clean:
 serve:
 	$(PY) server.py
 
-## Quick smoke test
+## Quick smoke test (integration tests only)
 smoke-test:
-	$(PY) server.py --test
+	$(PYTEST) tests/test_integration.py -v --tb=short
+
+## Generate test images for live MCP QA (see tests/live_qa_checklist.md)
+live-qa:
+	$(PY) tests/generate_live_images.py

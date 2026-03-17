@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import itertools
 import tempfile
+import uuid
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 from .validators import cleanup_temp_dir
+
+__all__ = ["CYAN", "MAGENTA", "YELLOW", "render_grid"]
 
 # Grid output directory — survives across calls, cleaned by OS or LRU eviction
 _GRID_DIR = Path(tempfile.gettempdir()) / "vision-tools-grids"
@@ -19,8 +21,6 @@ _GRID_DIR_MAX_MB = 50
 # Maximum dimension for grid rendering (pixels). Larger images are thumbnailed.
 # 4000x4000 RGBA x 2 copies ≈ 128MB — keeps memory reasonable.
 _GRID_MAX_DIM = 4000
-
-_file_counter = itertools.count()
 
 # Index of the .5 gridline in the 1-9 range (gets special yellow color)
 _GRID_MIDPOINT_INDEX = 5
@@ -185,6 +185,6 @@ def render_grid(img: Image.Image, source_path: str) -> str:
     result = Image.alpha_composite(overlay_img, overlay)
 
     stem = Path(source_path).stem
-    grid_path = str(_GRID_DIR / f"grid_{stem}_{next(_file_counter)}.png")
+    grid_path = str(_GRID_DIR / f"grid_{stem}_{uuid.uuid4().hex[:8]}.png")
     result.save(grid_path, "PNG")
     return grid_path

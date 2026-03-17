@@ -2,23 +2,74 @@
 
 from __future__ import annotations
 
-import itertools
 import tempfile
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 from PIL import Image
 
 from .grid import render_grid
 from .validators import cleanup_temp_dir, validate_coordinates, validate_image_path
 
+__all__ = ["crop_image", "image_info"]
+
 # Temp directory for crop outputs — cleaned by LRU eviction
 _CROP_DIR = Path(tempfile.gettempdir()) / "vision-tools-crops"
 _CROP_DIR_MAX_MB = 50
-_file_counter = itertools.count()
 
 
-def image_info(image_path: str) -> dict[str, Any]:
+class PixelsPerPercent(TypedDict):
+    """Pixels displaced per 1% coordinate error on each axis."""
+
+    x: float
+    y: float
+
+
+class PixelRegion(TypedDict):
+    """Crop region in absolute pixel coordinates."""
+
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+
+class NormalizedRegion(TypedDict):
+    """Crop region in normalized 0-1 coordinates."""
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+class ImageInfoResult(TypedDict):
+    """Return type for image_info."""
+
+    width: int
+    height: int
+    aspect_ratio: float
+    file_size_kb: float
+    mode: str
+    pixels_per_percent: PixelsPerPercent
+    longer_axis: str
+    grid_image: str
+
+
+class CropResult(TypedDict):
+    """Return type for crop_image."""
+
+    output_path: str
+    width: int
+    height: int
+    source_width: int
+    source_height: int
+    crop_region_px: PixelRegion
+    crop_region_normalized: NormalizedRegion
+
+
+def image_info(image_path: str) -> ImageInfoResult:
     """Return dimensions, metadata, and a coordinate-grid overlay for an image.
 
     Args:
@@ -68,7 +119,7 @@ def crop_image(
     y2: float,
     output_path: str | None = None,
     padding: int = 20,
-) -> dict[str, Any]:
+) -> CropResult:
     """Crop a region from an image using normalized 0-1 coordinates.
 
     Args:
@@ -133,7 +184,7 @@ def crop_image(
         _CROP_DIR.mkdir(parents=True, exist_ok=True)
         cleanup_temp_dir(_CROP_DIR, _CROP_DIR_MAX_MB)
         coord_str = f"{x1:.2f}_{y1:.2f}_{x2:.2f}_{y2:.2f}".replace(".", "")
-        out = _CROP_DIR / f"crop_{coord_str}_{next(_file_counter)}.png"
+        out = _CROP_DIR / f"crop_{coord_str}_{uuid.uuid4().hex[:8]}.png"
 
     out.parent.mkdir(parents=True, exist_ok=True)
     cropped.save(str(out), "PNG")

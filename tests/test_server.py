@@ -154,15 +154,25 @@ class TestMCPWiring:
         _register_color_tools(server)
         return server
 
-    def test_all_four_tools_registered(self, mcp: FastMCP) -> None:
-        tools = mcp._tool_manager.list_tools()
-        names = {t.name for t in tools}
-        assert names == {
-            "get_image_coordinates_grid",
-            "crop_to_magnify_image",
-            "extract_colors",
-            "check_contrast",
+    def test_all_four_tools_registered(self, mcp: FastMCP, synthetic_image: Path) -> None:
+        """Verify all expected tools are registered by calling each through the public API."""
+        expected_tools = {
+            "get_image_coordinates_grid": {"image_path": str(synthetic_image)},
+            "crop_to_magnify_image": {
+                "image_path": str(synthetic_image),
+                "x1": 0.0,
+                "y1": 0.0,
+                "x2": 1.0,
+                "y2": 1.0,
+                "padding": 0,
+            },
+            "extract_colors": {"image_path": str(synthetic_image), "n_colors": 2},
+            "check_contrast": {"foreground": "#FFFFFF", "background": "#000000"},
         }
+        for name, args in expected_tools.items():
+            result = asyncio.run(mcp.call_tool(name, args))
+            parsed = json.loads(_mcp_result_text(result))
+            assert "error" not in parsed, f"Tool '{name}' returned error: {parsed.get('error')}"
 
     def test_registration_rejects_non_fastmcp(self) -> None:
         with pytest.raises(TypeError, match="Expected FastMCP"):

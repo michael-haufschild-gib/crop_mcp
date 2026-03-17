@@ -81,7 +81,7 @@ echo ""
 # --- Pytest ---
 echo "=== pytest ==="
 if [ -f "$PYTEST" ]; then
-    if "$PYTEST" --tb=short -q; then
+    if "$PYTEST" --tb=short -q --cov; then
         echo -e "${GREEN}pytest: passed${NC}"
     else
         fail=1

@@ -11,18 +11,22 @@
 | Shared validators & utilities | `tools/validators.py` | `validate_image_path`, `cleanup_temp_dir` |
 | Tool implementation | `tools/{name}.py` | `tools/crop.py`, `tools/colors.py`, `tools/grid.py`, `tools/contrast.py` |
 | MCP server wiring | `server.py` | Tool registration, transport config |
+| Venv bootstrapping | `bootstrap.py` | Dependency checking, auto-setup, venv relaunching |
 | Setup/install | `setup.sh` | Venv creation, dependency install |
 | Tests | `tests/test_{name}.py` | `test_crop.py`, `test_colors.py`, `test_contrast.py` |
+| Live QA images + checklist | `tests/generate_live_images.py`, `tests/live_qa_checklist.md` | Manual MCP testing procedure |
 
 ## Module Dependency Flow
 
 ```
-server.py → tools/crop.py     → tools/grid.py → tools/validators.py
+bootstrap.py (stdlib only — no project dependencies)
+server.py → bootstrap.py
+          → tools/crop.py     → tools/grid.py → tools/validators.py
           → tools/colors.py   ─────────────→ tools/validators.py
           → tools/contrast.py (stdlib only — no tools/ dependencies)
 ```
 
-No circular dependencies. Image tool modules import validators from `tools/validators.py`. `tools/contrast.py` uses only stdlib (`math`, `re`).
+No circular dependencies. `bootstrap.py` uses only stdlib. Image tool modules import validators from `tools/validators.py`. `tools/contrast.py` uses only stdlib (`math`, `re`).
 
 ## How to Add a New Tool
 
@@ -55,8 +59,8 @@ def tool_name(image_path: str, ...) -> dict:
 3. In `server.py`, import the function and register it with `@mcp.tool()`.
 4. Wrap the call in try/except returning `json.dumps({"error": str(e)})` on failure.
 5. Write a tool description optimized for Claude's tool selection (when to use, not just what it does).
-6. Add a test case to `_run_self_test()` in `server.py`.
-7. Create `tests/test_{name}.py` with pytest tests.
+6. Create `tests/test_{name}.py` with pytest tests.
+7. Add test cases to `tests/live_qa_checklist.md` for MCP-level verification.
 8. Run `make check` (or `bash lint.sh`) to verify all quality gates pass.
 
 ## Server Wiring Pattern

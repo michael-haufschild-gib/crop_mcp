@@ -9,10 +9,23 @@
 | Command | Purpose |
 |-|-|
 | `make test` | Run full test suite |
-| `make check` | Run full pipeline: lint + format + typecheck + test + file length |
+| `make check` | Full pipeline: lint + format + typecheck + test + file length |
+| `make smoke-test` | Quick integration tests |
+| `make live-qa` | Generate images for live MCP QA (see below) |
 | `~/.vision-tools-env/bin/pytest tests/test_crop.py -v` | Run tests for a single module |
 | `~/.vision-tools-env/bin/mypy .` | Type-check all files (strict mode) |
-| `~/.vision-tools-env/bin/python3 server.py --test` | Quick smoke test (no pytest needed) |
+
+## Test Layers
+
+The test suite has three layers, each catching different classes of bugs:
+
+| Layer | Command | What it catches |
+|-|-|-|
+| Unit tests | `make test` | Logic errors in individual functions |
+| Integration tests | `make smoke-test` | Breakage across module boundaries |
+| Live MCP QA | `make live-qa` + checklist | MCP transport issues, tool usability from the AI consumer's perspective |
+
+Unit and integration tests run in CI. Live QA is a manual procedure run after tool changes or before releases.
 
 ## Test Structure
 
@@ -28,6 +41,9 @@ tests/
   test_validate_region.py  _validate_region optional coordinate validation
   test_server.py           MCP wiring, JSON serialization, error handling
   test_integration.py      End-to-end pipeline: info → crop → colors
+  generate_live_images.py  Generates deterministic images for live QA
+  live_qa_checklist.md     Step-by-step MCP QA procedure (13 test cases)
+  live_qa_images/          Generated images (gitignored)
 ```
 
 ## Shared Fixtures (conftest.py)
@@ -84,13 +100,31 @@ class TestToolName:
 | JSON serialization | Verify tool output serializes and deserializes correctly |
 | LRU eviction | Verify oldest files are removed when temp dir exceeds limit |
 
-## Self-Test (Smoke Test)
+## Live MCP QA
 
-The self-test in `server.py --test` is a quick sanity check that does not require pytest. It creates a synthetic image and verifies basic functionality. The pytest suite is the authoritative test source.
+Tests the full MCP tool chain from the AI consumer's perspective — something unit tests cannot cover. Catches: MCP transport errors, JSON serialization issues, tool description ambiguity, grid overlay readability, and multi-tool pipeline failures.
+
+**When to run**: After modifying tool behavior, changing tool descriptions, or before a release.
+
+**Procedure**:
+
+1. Run `make live-qa` to generate test images with known ground truth.
+2. Open `tests/live_qa_checklist.md` and execute each test case using the MCP tools.
+3. Compare results against the expected values in the checklist.
+
+The checklist covers all 4 tools across 13 test cases, including a full pipeline chain (grid → crop → colors) and error handling.
+
+**Test images** (`tests/generate_live_images.py`):
+
+| Image | Size | Ground truth |
+|-|-|-|
+| `quadrants_400x400.png` | 400x400 | TL=#FF0000, TR=#00FF00, BL=#0000FF, BR=#FFFF00 |
+| `color_bars_600x100.png` | 600x100 | 6 stripes: #FF0000, #FF8000, #FFFF00, #008000, #0000FF, #8000FF |
+| `large_markers_2000x1000.png` | 2000x1000 | White + red markers at (0.25,0.25), (0.5,0.5), (0.75,0.75) |
 
 ## Test Images
 
-`tests/` may contain real screenshots for manual verification only. Automated tests use synthetic images exclusively.
+Automated tests use synthetic images from fixtures exclusively. `tests/live_qa_images/` contains generated images for manual QA (gitignored). Real screenshots may exist in `screenshots/` for manual verification only.
 
 ## Common Mistakes
 

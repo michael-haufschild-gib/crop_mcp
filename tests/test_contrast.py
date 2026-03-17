@@ -188,7 +188,7 @@ class TestCheckContrast:
     def test_low_contrast_fails_all(self) -> None:
         # Light gray on white — should fail everything
         result = check_contrast("#CCCCCC", "#FFFFFF")
-        ratio = float(result["contrast_ratio"])  # type: ignore[arg-type]
+        ratio = result["contrast_ratio"]
         assert ratio < 3.0
         assert result["wcag_aa"] is False
         assert result["wcag_aaa"] is False
@@ -197,7 +197,7 @@ class TestCheckContrast:
         # Find a pair with ratio between 4.5 and 7.0
         # #767676 on white is the classic AA boundary color (~4.54:1)
         result = check_contrast("#767676", "#FFFFFF")
-        ratio = float(result["contrast_ratio"])  # type: ignore[arg-type]
+        ratio = result["contrast_ratio"]
         assert ratio >= 4.5
         assert ratio < 7.0
         assert result["wcag_aa"] is True

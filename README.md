@@ -58,7 +58,8 @@ All commands assume setup has been run (`bash setup.sh`).
 | `make lint` | Run ruff check only |
 | `make format` | Auto-format all Python files |
 | `make typecheck` | Run mypy in strict mode |
-| `make smoke-test` | Quick self-test without pytest |
+| `make smoke-test` | Quick integration tests |
+| `make live-qa` | Generate images for live MCP QA (see `tests/live_qa_checklist.md`) |
 | `make clean` | Remove caches and build artifacts |
 
 ### Environment variables
@@ -79,7 +80,8 @@ bash lint.sh                    # all of the above in sequence
 ## Architecture
 
 ```
-server.py             MCP server entry point — tool registration, venv auto-setup, self-test
+server.py             MCP server entry point — tool registration and wiring
+bootstrap.py          Venv detection, dependency checking, auto-setup
 tools/
   validators.py       Shared validators: validate_image_path, validate_coordinates, cleanup_temp_dir
   crop.py             crop_image and image_info implementations
@@ -96,12 +98,17 @@ tests/
   test_validate_region.py  Tests for optional region coordinate validation
   test_server.py      Server wrapper contract tests (JSON serialization, error handling)
   test_integration.py End-to-end pipeline tests (info → crop → colors)
+  generate_live_images.py  Generates deterministic images for live QA
+  live_qa_checklist.md     Step-by-step MCP QA procedure (13 test cases)
+  live_qa_images/          Generated images (gitignored)
 ```
 
 ### Dependency Flow
 
 ```
-server.py → tools/crop.py     → tools/grid.py → tools/validators.py
+bootstrap.py (stdlib only — no project dependencies)
+server.py → bootstrap.py
+          → tools/crop.py     → tools/grid.py → tools/validators.py
           → tools/colors.py   ─────────────→ tools/validators.py
           → tools/contrast.py (stdlib only — no tools/ dependencies)
 ```

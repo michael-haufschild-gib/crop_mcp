@@ -77,15 +77,39 @@ PYTHON="$VENV_DIR/bin/python3"
 # Upgrade pip first (silently)
 "$PIP" install --upgrade pip --quiet 2>/dev/null || true
 
-DEPS=("mcp[cli]" "Pillow" "numpy")
-DEV_DEPS=("pytest" "mypy" "ruff" "types-Pillow")
+# Check installed version against a minimum. Returns 0 if satisfied, 1 otherwise.
+# Usage: check_pkg_version <pip_name> <min_major> <min_minor>
+check_pkg_version() {
+    local pkg="$1" min_major="$2" min_minor="$3"
+    local ver
+    ver=$("$PIP" show "$pkg" 2>/dev/null | grep '^Version:' | awk '{print $2}')
+    if [ -z "$ver" ]; then
+        return 1  # not installed
+    fi
+    local major minor
+    major=$(echo "$ver" | cut -d. -f1)
+    minor=$(echo "$ver" | cut -d. -f2)
+    if [ "$major" -gt "$min_major" ] 2>/dev/null; then
+        return 0
+    elif [ "$major" -eq "$min_major" ] && [ "$minor" -ge "$min_minor" ] 2>/dev/null; then
+        return 0
+    fi
+    return 1  # version too old
+}
+
+# (pip_name, install_spec, min_major, min_minor)
+DEPS_SPEC=(
+    "mcp:mcp[cli]:1:0"
+    "Pillow:Pillow:10:0"
+    "numpy:numpy:1:24"
+)
+DEV_DEPS=("pytest" "pytest-cov" "mypy" "ruff" "types-Pillow")
 MISSING=()
 
-for dep in "${DEPS[@]}"; do
-    # Normalize: "mcp[cli]" -> check for "mcp"
-    pkg_name=$(echo "$dep" | sed 's/\[.*\]//')
-    if ! "$PYTHON" -c "import $pkg_name" 2>/dev/null; then
-        MISSING+=("$dep")
+for spec in "${DEPS_SPEC[@]}"; do
+    IFS=':' read -r pkg_name install_name min_major min_minor <<< "$spec"
+    if ! check_pkg_version "$pkg_name" "$min_major" "$min_minor"; then
+        MISSING+=("$install_name")
     fi
 done
 
@@ -108,8 +132,7 @@ fi
 DEV_MISSING=()
 
 for dep in "${DEV_DEPS[@]}"; do
-    pkg_name=$(echo "$dep" | sed 's/\[.*\]//' | sed 's/-/_/g')
-    if ! "$PYTHON" -c "import $pkg_name" 2>/dev/null; then
+    if ! "$PIP" show "$dep" &>/dev/null; then
         DEV_MISSING+=("$dep")
     fi
 done

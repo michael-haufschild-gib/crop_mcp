@@ -1,6 +1,6 @@
 # Vision Tools MCP
 
-MCP server providing `crop_to_magnify_image`, `get_image_coordinates_grid`, and `extract_colors` tools for Claude Code.
+MCP server providing `crop_to_magnify_image`, `get_image_coordinates_grid`, `extract_colors`, and `check_contrast` tools for Claude Code.
 
 ## Constraints
 

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
+import itertools
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 from .validators import cleanup_temp_dir
 
@@ -16,8 +16,23 @@ _GRID_DIR = Path(tempfile.gettempdir()) / "vision-tools-grids"
 # LRU eviction threshold for grid temp directory (megabytes)
 _GRID_DIR_MAX_MB = 50
 
+# Maximum dimension for grid rendering (pixels). Larger images are thumbnailed.
+# 4000x4000 RGBA x 2 copies ≈ 128MB — keeps memory reasonable.
+_GRID_MAX_DIM = 4000
+
+_file_counter = itertools.count()
+
 # Index of the .5 gridline in the 1-9 range (gets special yellow color)
 _GRID_MIDPOINT_INDEX = 5
+
+# Desaturation factor: 0.0 = full grayscale, 1.0 = original color.
+# 0.2 keeps just enough color to identify UI elements while reducing
+# visual noise so gridlines remain clearly visible.
+_SATURATION_FACTOR = 0.2
+
+# Sharpening factor: 1.0 = no change, >1.0 = sharper.
+# Crisper edges help distinguish gridline positions against the image.
+_SHARPNESS_FACTOR = 1.5
 
 # Grid colors
 CYAN = (0, 255, 255)
@@ -115,8 +130,15 @@ def render_grid(img: Image.Image, source_path: str) -> str:
     _GRID_DIR.mkdir(parents=True, exist_ok=True)
     cleanup_temp_dir(_GRID_DIR, _GRID_DIR_MAX_MB)
 
+    # Thumbnail if either dimension exceeds the memory budget
+    if img.size[0] > _GRID_MAX_DIM or img.size[1] > _GRID_MAX_DIM:
+        img = img.copy()
+        img.thumbnail((_GRID_MAX_DIM, _GRID_MAX_DIM), Image.LANCZOS)
+
     w, h = img.size
-    overlay_img = img.convert("L").convert("RGBA")
+    desaturated = ImageEnhance.Color(img.convert("RGB")).enhance(_SATURATION_FACTOR)
+    sharpened = ImageEnhance.Sharpness(desaturated).enhance(_SHARPNESS_FACTOR)
+    overlay_img = sharpened.convert("RGBA")
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
@@ -142,6 +164,6 @@ def render_grid(img: Image.Image, source_path: str) -> str:
     result = Image.alpha_composite(overlay_img, overlay)
 
     stem = Path(source_path).stem
-    grid_path = str(_GRID_DIR / f"grid_{stem}_{os.getpid()}.png")
+    grid_path = str(_GRID_DIR / f"grid_{stem}_{next(_file_counter)}.png")
     result.save(grid_path, "PNG")
     return grid_path

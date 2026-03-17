@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import itertools
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,7 @@ from .validators import cleanup_temp_dir, validate_coordinates, validate_image_p
 # Temp directory for crop outputs — cleaned by LRU eviction
 _CROP_DIR = Path(tempfile.gettempdir()) / "vision-tools-crops"
 _CROP_DIR_MAX_MB = 50
+_file_counter = itertools.count()
 
 
 def image_info(image_path: str) -> dict[str, Any]:
@@ -132,7 +133,7 @@ def crop_image(
         _CROP_DIR.mkdir(parents=True, exist_ok=True)
         cleanup_temp_dir(_CROP_DIR, _CROP_DIR_MAX_MB)
         coord_str = f"{x1:.2f}_{y1:.2f}_{x2:.2f}_{y2:.2f}".replace(".", "")
-        out = _CROP_DIR / f"crop_{coord_str}_{os.getpid()}.png"
+        out = _CROP_DIR / f"crop_{coord_str}_{next(_file_counter)}.png"
 
     out.parent.mkdir(parents=True, exist_ok=True)
     cropped.save(str(out), "PNG")

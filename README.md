@@ -1,6 +1,6 @@
 # Vision Tools MCP
 
-An MCP server that gives Claude Code three image analysis tools for inspecting screenshots and images.
+An MCP server that gives Claude Code four image analysis tools for inspecting screenshots, extracting colors, and checking accessibility.
 
 ## Tools
 
@@ -9,11 +9,20 @@ An MCP server that gives Claude Code three image analysis tools for inspecting s
 | `get_image_coordinates_grid` | Returns image dimensions and a coordinate-reference grid overlay with labeled gridlines (.1 through .9) for planning crops. |
 | `crop_to_magnify_image` | Crops a region using normalized 0-1 coordinates. Acts as a magnifying glass for reading text or verifying visual details. |
 | `extract_colors` | Extracts dominant colors as exact hex values using k-means clustering. Optionally analyzes a subregion. |
+| `check_contrast` | Computes WCAG 2.1 contrast ratio between two hex colors. Returns AA/AAA pass/fail and HSL/OKLCH conversions. |
 
 ## Prerequisites
 
 - Python 3.9+
 - macOS, Linux, or WSL
+
+### Runtime dependencies
+
+| Package | Version |
+|-|-|
+| mcp[cli] | >=1.0, <3 |
+| Pillow | >=10, <12 |
+| numpy | >=1.24, <3 |
 
 ## Setup
 
@@ -52,6 +61,12 @@ All commands assume setup has been run (`bash setup.sh`).
 | `make smoke-test` | Quick self-test without pytest |
 | `make clean` | Remove caches and build artifacts |
 
+### Environment variables
+
+| Variable | Default | Purpose |
+|-|-|-|
+| `LOG_LEVEL` | `INFO` | Server log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
 Or use the underlying tools directly:
 
 ```bash
@@ -70,6 +85,7 @@ tools/
   crop.py             crop_image and image_info implementations
   grid.py             Coordinate grid overlay rendering
   colors.py           extract_colors with numpy k-means clustering
+  contrast.py         WCAG contrast ratio, HSL/OKLCH conversion (stdlib only)
 tests/
   conftest.py         Shared fixtures: synthetic_image, solid_color_image
   test_validators.py  Tests for path and coordinate validation
@@ -85,8 +101,9 @@ tests/
 ### Dependency Flow
 
 ```
-server.py → tools/crop.py → tools/grid.py → tools/validators.py
-          → tools/colors.py ─────────────→ tools/validators.py
+server.py → tools/crop.py     → tools/grid.py → tools/validators.py
+          → tools/colors.py   ─────────────→ tools/validators.py
+          → tools/contrast.py (stdlib only — no tools/ dependencies)
 ```
 
 No circular dependencies. All tools depend on `validators.py` for shared validation. Grid rendering is isolated from crop logic.

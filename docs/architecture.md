@@ -9,19 +9,20 @@
 | Type | Location | Example |
 |-|-|-|
 | Shared validators & utilities | `tools/validators.py` | `validate_image_path`, `cleanup_temp_dir` |
-| Tool implementation | `tools/{name}.py` | `tools/crop.py`, `tools/colors.py`, `tools/grid.py` |
+| Tool implementation | `tools/{name}.py` | `tools/crop.py`, `tools/colors.py`, `tools/grid.py`, `tools/contrast.py` |
 | MCP server wiring | `server.py` | Tool registration, transport config |
 | Setup/install | `setup.sh` | Venv creation, dependency install |
-| Tests | `tests/test_{name}.py` | `test_crop.py`, `test_colors.py` |
+| Tests | `tests/test_{name}.py` | `test_crop.py`, `test_colors.py`, `test_contrast.py` |
 
 ## Module Dependency Flow
 
 ```
-server.py → tools/crop.py → tools/grid.py → tools/validators.py
-          → tools/colors.py ─────────────→ tools/validators.py
+server.py → tools/crop.py     → tools/grid.py → tools/validators.py
+          → tools/colors.py   ─────────────→ tools/validators.py
+          → tools/contrast.py (stdlib only — no tools/ dependencies)
 ```
 
-No circular dependencies. All tool modules import validators from `tools/validators.py`.
+No circular dependencies. Image tool modules import validators from `tools/validators.py`. `tools/contrast.py` uses only stdlib (`math`, `re`).
 
 ## How to Add a New Tool
 

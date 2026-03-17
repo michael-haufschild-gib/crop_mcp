@@ -1,17 +1,23 @@
-"""Tests for server.py MCP tool wrappers.
+"""Tests for server.py MCP tool wrappers and MCP wiring.
 
-These tests verify the server wrapper contract:
+These tests verify:
 1. Tool functions return dicts that serialize to valid JSON.
 2. JSON contains all expected fields.
 3. Error inputs produce ValueError (caught by server wrapper as error JSON).
+4. MCP tool registration wires all four tools with correct names.
+5. MCP tool invocation returns valid JSON strings through the server layer.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
+from mcp.server.fastmcp import FastMCP
+
+from server import _register_color_tools, _register_image_tools
 
 
 class TestImageInfoWrapper:
@@ -124,3 +130,117 @@ class TestServerWrapperPattern:
 
         with pytest.raises(ValueError, match="Could not open image"):
             image_info(str(bad_file))
+
+
+def _mcp_result_text(result: object) -> str:
+    """Extract the JSON text from a FastMCP call_tool result.
+
+    call_tool returns (list[TextContent], dict). The first TextContent
+    block contains the JSON string returned by the tool wrapper.
+    """
+    content_blocks = result[0]  # type: ignore[index]
+    return str(content_blocks[0].text)
+
+
+class TestMCPWiring:
+    """Tests that verify the actual MCP server layer — tool registration,
+    invocation through FastMCP, and JSON serialization."""
+
+    @pytest.fixture()  # type: ignore[untyped-decorator]
+    def mcp(self) -> FastMCP:
+        """Create a FastMCP instance with all tools registered."""
+        server = FastMCP(name="test-vision-tools")
+        _register_image_tools(server)
+        _register_color_tools(server)
+        return server
+
+    def test_all_four_tools_registered(self, mcp: FastMCP) -> None:
+        tools = mcp._tool_manager.list_tools()
+        names = {t.name for t in tools}
+        assert names == {
+            "get_image_coordinates_grid",
+            "crop_to_magnify_image",
+            "extract_colors",
+            "check_contrast",
+        }
+
+    def test_registration_rejects_non_fastmcp(self) -> None:
+        with pytest.raises(TypeError, match="Expected FastMCP"):
+            _register_image_tools("not a FastMCP")
+
+    def test_image_info_returns_json_via_mcp(self, mcp: FastMCP, synthetic_image: Path) -> None:
+        result = asyncio.run(
+            mcp.call_tool(
+                "get_image_coordinates_grid",
+                {"image_path": str(synthetic_image)},
+            )
+        )
+        parsed = json.loads(_mcp_result_text(result))
+        assert parsed["width"] == 200
+        assert parsed["height"] == 100
+        assert "grid_image" in parsed
+
+    def test_crop_returns_json_via_mcp(self, mcp: FastMCP, synthetic_image: Path) -> None:
+        result = asyncio.run(
+            mcp.call_tool(
+                "crop_to_magnify_image",
+                {
+                    "image_path": str(synthetic_image),
+                    "x1": 0.0,
+                    "y1": 0.0,
+                    "x2": 0.5,
+                    "y2": 1.0,
+                    "padding": 0,
+                },
+            )
+        )
+        parsed = json.loads(_mcp_result_text(result))
+        assert parsed["width"] == 100
+        assert parsed["height"] == 100
+        assert Path(parsed["output_path"]).exists()
+
+    def test_extract_colors_returns_json_via_mcp(self, mcp: FastMCP, synthetic_image: Path) -> None:
+        result = asyncio.run(
+            mcp.call_tool(
+                "extract_colors",
+                {"image_path": str(synthetic_image), "n_colors": 2},
+            )
+        )
+        parsed = json.loads(_mcp_result_text(result))
+        hexes = {c["hex"] for c in parsed["colors"]}
+        assert "#FF0000" in hexes
+        assert "#0000FF" in hexes
+
+    def test_check_contrast_returns_json_via_mcp(self, mcp: FastMCP) -> None:
+        result = asyncio.run(
+            mcp.call_tool(
+                "check_contrast",
+                {"foreground": "#FFFFFF", "background": "#000000"},
+            )
+        )
+        parsed = json.loads(_mcp_result_text(result))
+        assert parsed["contrast_ratio"] == 21.0
+        assert parsed["wcag_aa"] is True
+
+    def test_invalid_input_returns_error_json_via_mcp(self, mcp: FastMCP) -> None:
+        """Invalid path should return error JSON, not raise."""
+        result = asyncio.run(
+            mcp.call_tool(
+                "get_image_coordinates_grid",
+                {"image_path": "/nonexistent/image.png"},
+            )
+        )
+        parsed = json.loads(_mcp_result_text(result))
+        assert "error" in parsed
+        assert "not found" in parsed["error"]
+
+    def test_invalid_contrast_returns_error_json_via_mcp(self, mcp: FastMCP) -> None:
+        result = asyncio.run(
+            mcp.call_tool(
+                "check_contrast",
+                {"foreground": "not-a-color", "background": "#000000"},
+            )
+        )
+        parsed = json.loads(_mcp_result_text(result))
+        assert "error" in parsed
+        assert "Invalid hex color" in parsed["error"]

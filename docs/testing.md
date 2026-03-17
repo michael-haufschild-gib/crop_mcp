@@ -24,6 +24,7 @@ tests/
   test_grid.py             Pixel-level grid rendering assertions
   test_colors.py           _kmeans, extract_colors
   test_cleanup.py          cleanup_temp_dir LRU eviction
+  test_contrast.py         WCAG contrast ratio, HSL/OKLCH conversions
   test_validate_region.py  _validate_region optional coordinate validation
   test_server.py           MCP wiring, JSON serialization, error handling
   test_integration.py      End-to-end pipeline: info → crop → colors

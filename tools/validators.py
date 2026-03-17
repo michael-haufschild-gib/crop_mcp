@@ -121,8 +121,9 @@ def cleanup_temp_dir(dir_path: Path, max_mb: float = 50) -> None:
         return
     # Evict down to half the limit to avoid re-triggering on the next call
     target = limit // 2
-    while total > target and entries:
-        victim, _, size = entries.pop(0)
+    for victim, _, size in entries:
+        if total <= target:
+            break
         total -= size
         with contextlib.suppress(OSError):
             victim.unlink(missing_ok=True)

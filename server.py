@@ -19,7 +19,7 @@ from pathlib import Path
 
 logging.basicConfig(
     stream=sys.stderr,
-    level=logging.INFO,
+    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -150,6 +150,17 @@ def _run_self_test() -> None:
         assert "#FF0000" in hexes, f"Expected #FF0000 in {hexes}"
         assert "#0000FF" in hexes, f"Expected #0000FF in {hexes}"
 
+        # Test check_contrast
+        from tools.contrast import check_contrast
+
+        result = check_contrast("#FFFFFF", "#000000")
+        print(f"  check_contrast: ratio={result['contrast_ratio']}, verdict={result['verdict']}")
+        assert result["contrast_ratio"] == 21.0, (
+            f"Expected ratio 21.0, got {result['contrast_ratio']}"
+        )
+        assert result["wcag_aa"] is True, "Expected AA pass for black on white"
+        assert result["wcag_aaa"] is True, "Expected AAA pass for black on white"
+
     print("All tests passed!")
 
 
@@ -167,15 +178,16 @@ def _ensure_dependencies() -> None:
             sys.exit(1)
 
 
-def _start_server() -> None:
-    """Register MCP tools and start the stdio server."""
+def _register_image_tools(mcp_server: object) -> None:  # noqa: C901
+    """Register image-based MCP tools (grid, crop, colors)."""
     from mcp.server.fastmcp import FastMCP
+
+    if not isinstance(mcp_server, FastMCP):
+        raise TypeError(f"Expected FastMCP instance, got {type(mcp_server).__name__}")
 
     from tools.colors import extract_colors as _extract_colors
     from tools.crop import crop_image as _crop_image
     from tools.crop import image_info as _image_info
-
-    mcp_server = FastMCP(name="vision-tools")
 
     @mcp_server.tool(  # type: ignore[untyped-decorator]
         name="get_image_coordinates_grid",
@@ -318,6 +330,69 @@ def _start_server() -> None:
             _log.error("tool=extract_colors error=%s", e)
             return json.dumps({"error": f"Unexpected error: {e}"})
 
+
+def _register_color_tools(mcp_server: object) -> None:
+    """Register color analysis MCP tools (contrast)."""
+    from mcp.server.fastmcp import FastMCP
+
+    if not isinstance(mcp_server, FastMCP):
+        raise TypeError(f"Expected FastMCP instance, got {type(mcp_server).__name__}")
+
+    from tools.contrast import check_contrast as _check_contrast
+
+    @mcp_server.tool(  # type: ignore[untyped-decorator]
+        name="check_contrast",
+        description=(
+            "Compute WCAG contrast ratio between two hex colors and get "
+            "color space conversions (RGB, HSL, OKLCH). Use when you have "
+            "two colors (e.g. from extract_colors) and need the exact "
+            "contrast ratio for accessibility review, or need a hex color "
+            "converted to OKLCH/HSL. Do NOT guess contrast ratios or color "
+            "conversions — use this tool."
+        ),
+    )
+    def check_contrast(
+        foreground: str,
+        background: str,
+        text_is_large: bool = False,
+    ) -> str:
+        """Compute WCAG contrast ratio and color conversions.
+
+        Args:
+            foreground: Text color as hex, e.g. "#FFFFFF" or "FFFFFF".
+            background: Background color as hex, e.g. "#1A1A2E" or "1A1A2E".
+            text_is_large: True if text is >=18pt or >=14pt bold.
+        """
+        _log.info(
+            "tool=check_contrast fg=%s bg=%s large=%s",
+            foreground,
+            background,
+            text_is_large,
+        )
+        t0 = time.monotonic()
+        try:
+            result = _check_contrast(
+                foreground=foreground,
+                background=background,
+                text_is_large=text_is_large,
+            )
+            _log.info("tool=check_contrast duration=%.3fs", time.monotonic() - t0)
+            return json.dumps(result)
+        except ValueError as e:
+            _log.error("tool=check_contrast error=%s", e)
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            _log.error("tool=check_contrast error=%s", e)
+            return json.dumps({"error": f"Unexpected error: {e}"})
+
+
+def _start_server() -> None:
+    """Register MCP tools and start the stdio server."""
+    from mcp.server.fastmcp import FastMCP
+
+    mcp_server = FastMCP(name="vision-tools")
+    _register_image_tools(mcp_server)
+    _register_color_tools(mcp_server)
     mcp_server.run(transport="stdio")
 
 

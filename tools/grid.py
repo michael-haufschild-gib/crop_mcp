@@ -34,6 +34,10 @@ _SATURATION_FACTOR = 0.2
 # Crisper edges help distinguish gridline positions against the image.
 _SHARPNESS_FACTOR = 1.5
 
+# Minimum image dimension (px) to add labels on 5% gridlines.
+# Below this, the labels overlap and clutter the image.
+_MINOR_LABEL_MIN_DIM = 800
+
 # Grid colors
 CYAN = (0, 255, 255)
 MAGENTA = (255, 0, 255)
@@ -145,9 +149,21 @@ def render_grid(img: Image.Image, source_path: str) -> str:
     font_size = max(16, int(min(w, h) * 0.05))
     font = _get_font(font_size)
     pad = 2
-    minor_line = (*MAGENTA, 60)
+    minor_line = (*MAGENTA, 180)
 
-    # 5% lines: subtle magenta midpoint references
+    # 5% labels: use a smaller font, only when image is large enough
+    minor_font_size = max(11, int(font_size * 0.6) - 1)
+    minor_font = _get_font(minor_font_size)
+    label_minor = min(w, h) >= _MINOR_LABEL_MIN_DIM
+
+    # Compute major label pill height so minor labels sit below/right of them
+    _sample_bbox = font.getbbox(".1")
+    major_pill_h = (_sample_bbox[3] - _sample_bbox[1]) + pad * 2
+    major_pill_w = (_sample_bbox[2] - _sample_bbox[0]) + pad * 2
+    minor_top_y = major_pill_h + 6
+    minor_left_x = major_pill_w + 6
+
+    # 5% lines: magenta midpoint references (no alpha fade)
     for i in range(1, 20):
         if i % 2 == 0:
             continue
@@ -156,6 +172,11 @@ def render_grid(img: Image.Image, source_path: str) -> str:
         y = int(frac * h)
         draw.line([(x, 0), (x, h)], fill=minor_line, width=1)
         draw.line([(0, y), (w, y)], fill=minor_line, width=1)
+
+        if label_minor:
+            label = f".{i * 5:02}"
+            _draw_label_pill(draw, (x + 2, minor_top_y), label, MAGENTA, minor_font, pad)
+            _draw_label_pill(draw, (minor_left_x, y + 2), label, MAGENTA, minor_font, pad)
 
     # 10% lines: bold, labeled on all edges
     for i in range(1, 10):

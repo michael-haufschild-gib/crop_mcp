@@ -25,11 +25,5 @@ Thumbs.db
 claude.sh
 task_state.md
 
-# Manual test artifacts (not used by automated tests)
-tests/crops/
-tests/grid_experiments/
-tests/daily-rewards.png
-tests/first-purchase-popup.png
-tests/grid_daily-rewards.png
-tests/grid_first-purchase-popup.png
-tests/grid_grayscale_test.png
+# Screenshots (manual test artifacts, not used by automated tests)
+screenshots/

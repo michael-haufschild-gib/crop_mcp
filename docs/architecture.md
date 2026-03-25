@@ -80,7 +80,8 @@ def tool_name(param: str, ...) -> str:
     except ValueError as e:
         return json.dumps({"error": str(e)})
     except Exception as e:
-        return json.dumps({"error": f"Unexpected error: {e}"})
+        logging.error("tool=%s unexpected error=%s", tool_name, e, exc_info=True)
+        return json.dumps({"error": f"Internal error in {tool_name}. Check logs."})
 ```
 
 Key rules:

@@ -55,8 +55,8 @@ def _run_tool(tool_name: str, fn: Callable[..., Any], **kwargs: Any) -> str:
         _log.error("tool=%s error=%s", tool_name, e)
         return json.dumps({"error": str(e)})
     except Exception as e:
-        _log.error("tool=%s error=%s", tool_name, e)
-        return json.dumps({"error": f"Unexpected error: {e}"})
+        _log.error("tool=%s unexpected error=%s", tool_name, e, exc_info=True)
+        return json.dumps({"error": f"Internal error in {tool_name}. Check logs."})
 
 
 def _validate_mcp_server(mcp_server: object) -> None:

@@ -27,27 +27,5 @@ jobs:
           ~/.vision-tools-env/bin/pip install --upgrade pip
           ~/.vision-tools-env/bin/pip install -r requirements.lock
 
-      - name: Lint (ruff check)
-        run: ~/.vision-tools-env/bin/ruff check .
-
-      - name: Format check (ruff format)
-        run: ~/.vision-tools-env/bin/ruff format --check .
-
-      - name: Type check (mypy)
-        run: ~/.vision-tools-env/bin/mypy .
-
-      - name: Test (pytest)
-        run: ~/.vision-tools-env/bin/pytest -v --cov
-
-      - name: File length check
-        run: |
-          MAX_LINES=750
-          fail=0
-          for f in $(find . -name '*.py' -not -path './.git/*' -not -path '*__pycache__*'); do
-            lines=$(wc -l < "$f")
-            if [ "$lines" -gt "$MAX_LINES" ]; then
-              echo "OVER LIMIT: $f ($lines lines, max $MAX_LINES)"
-              fail=1
-            fi
-          done
-          exit $fail
+      - name: Run quality pipeline (make check)
+        run: make check

@@ -77,80 +77,18 @@ PYTHON="$VENV_DIR/bin/python3"
 # Upgrade pip first (silently)
 "$PIP" install --upgrade pip --quiet 2>/dev/null || true
 
-# Check installed version against a minimum. Returns 0 if satisfied, 1 otherwise.
-# Usage: check_pkg_version <pip_name> <min_major> <min_minor>
-check_pkg_version() {
-    local pkg="$1" min_major="$2" min_minor="$3"
-    local ver
-    ver=$("$PIP" show "$pkg" 2>/dev/null | grep '^Version:' | awk '{print $2}')
-    if [ -z "$ver" ]; then
-        return 1  # not installed
-    fi
-    local major minor
-    major=$(echo "$ver" | cut -d. -f1)
-    minor=$(echo "$ver" | cut -d. -f2)
-    if [ "$major" -gt "$min_major" ] 2>/dev/null; then
-        return 0
-    elif [ "$major" -eq "$min_major" ] && [ "$minor" -ge "$min_minor" ] 2>/dev/null; then
-        return 0
-    fi
-    return 1  # version too old
+# Install all deps from the single source of truth: pyproject.toml
+# pip install -e ".[dev]" is idempotent — fast when already satisfied.
+warn "Installing dependencies from pyproject.toml ..."
+"$PIP" install -e "$SCRIPT_DIR[dev]" --quiet || {
+    error "Failed to install dependencies."
+    echo ""
+    echo "  Try running manually:"
+    echo "    $PIP install -e \"$SCRIPT_DIR[dev]\""
+    echo ""
+    exit 1
 }
-
-# (pip_name, install_spec, min_major, min_minor)
-DEPS_SPEC=(
-    "mcp:mcp[cli]:1:0"
-    "Pillow:Pillow:10:0"
-    "numpy:numpy:1:24"
-)
-DEV_DEPS=("pytest" "pytest-cov" "mypy" "ruff" "types-Pillow")
-MISSING=()
-
-for spec in "${DEPS_SPEC[@]}"; do
-    IFS=':' read -r pkg_name install_name min_major min_minor <<< "$spec"
-    if ! check_pkg_version "$pkg_name" "$min_major" "$min_minor"; then
-        MISSING+=("$install_name")
-    fi
-done
-
-if [ ${#MISSING[@]} -eq 0 ]; then
-    info "All dependencies already installed"
-else
-    warn "Installing: ${MISSING[*]} ..."
-    "$PIP" install "${MISSING[@]}" --quiet || {
-        error "Failed to install dependencies."
-        echo ""
-        echo "  Try running manually:"
-        echo "    $PIP install ${MISSING[*]}"
-        echo ""
-        exit 1
-    }
-    info "Dependencies installed"
-fi
-
-# --- Install dev dependencies ---
-DEV_MISSING=()
-
-for dep in "${DEV_DEPS[@]}"; do
-    if ! "$PIP" show "$dep" &>/dev/null; then
-        DEV_MISSING+=("$dep")
-    fi
-done
-
-if [ ${#DEV_MISSING[@]} -eq 0 ]; then
-    info "All dev dependencies already installed"
-else
-    warn "Installing dev deps: ${DEV_MISSING[*]} ..."
-    "$PIP" install "${DEV_MISSING[@]}" --quiet || {
-        error "Failed to install dev dependencies."
-        echo ""
-        echo "  Try running manually:"
-        echo "    $PIP install ${DEV_MISSING[*]}"
-        echo ""
-        exit 1
-    }
-    info "Dev dependencies installed"
-fi
+info "Dependencies installed"
 
 # --- Verify installation ---
 "$PYTHON" -c "

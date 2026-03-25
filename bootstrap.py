@@ -71,10 +71,17 @@ def _auto_setup() -> bool:
         return False
 
 
+def _in_correct_venv() -> bool:
+    """Check if the current interpreter is the project's venv, not just any venv."""
+    try:
+        return Path(sys.prefix).resolve() == VENV_DIR.resolve()
+    except (OSError, ValueError):
+        return False
+
+
 def _relaunch_in_venv() -> None:
-    """Re-launch this script using the venv Python if we're not already in it."""
-    # Already in venv?
-    if sys.prefix != sys.base_prefix:
+    """Re-launch this script using the venv Python if we're not in the project venv."""
+    if _in_correct_venv():
         return
     if not VENV_PYTHON.exists():
         return

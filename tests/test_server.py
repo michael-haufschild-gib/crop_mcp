@@ -6,6 +6,8 @@ These tests verify:
 3. Error inputs produce ValueError (caught by server wrapper as error JSON).
 4. MCP tool registration wires all four tools with correct names.
 5. MCP tool invocation returns valid JSON strings through the server layer.
+6. Unexpected exceptions are sanitized before reaching MCP clients.
+7. main() entry point handles --setup flag and normal startup.
 """
 
 from __future__ import annotations
@@ -13,11 +15,12 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from server import _register_color_tools, _register_image_tools
+from server import _register_color_tools, _register_image_tools, _run_tool, main
 
 
 class TestImageInfoWrapper:
@@ -254,3 +257,60 @@ class TestMCPWiring:
         parsed = json.loads(_mcp_result_text(result))
         assert "error" in parsed
         assert "Invalid hex color" in parsed["error"]
+
+
+class TestRunToolErrorSanitization:
+    """Tests that _run_tool sanitizes unexpected exception details."""
+
+    def test_value_error_preserves_message(self) -> None:
+        def failing_tool() -> None:
+            raise ValueError("helpful user message")
+
+        result = json.loads(_run_tool("test_tool", failing_tool))
+        assert result["error"] == "helpful user message"
+
+    def test_unexpected_error_is_sanitized(self) -> None:
+        def crashing_tool() -> None:
+            raise RuntimeError("internal traceback detail at /secret/path")
+
+        result = json.loads(_run_tool("test_tool", crashing_tool))
+        assert "internal traceback" not in result["error"]
+        assert "/secret/path" not in result["error"]
+        assert result["error"] == "Internal error in test_tool. Check logs."
+
+
+class TestMain:
+    """Tests for the main() entry point."""
+
+    def test_setup_flag_calls_execv(self, tmp_path: Path) -> None:
+        script = tmp_path / "setup.sh"
+        script.touch()
+        # os.execv replaces the process; mock raises OSError to stop fallthrough
+        with (
+            patch("sys.argv", ["server.py", "--setup"]),
+            patch("server.SETUP_SCRIPT", script),
+            patch("os.execv", side_effect=OSError("mock execv")) as mock_execv,
+            pytest.raises(OSError, match="mock execv"),
+        ):
+            main()
+        mock_execv.assert_called_once()
+        assert mock_execv.call_args[0][0] == "/bin/bash"
+        assert str(script) in mock_execv.call_args[0][1]
+
+    def test_setup_flag_exits_when_script_missing(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nonexistent.sh"
+        with (
+            patch("sys.argv", ["server.py", "--setup"]),
+            patch("server.SETUP_SCRIPT", missing),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            main()
+
+    def test_normal_startup_calls_ensure_and_start(self) -> None:
+        with (
+            patch("sys.argv", ["server.py"]),
+            patch("server.ensure_dependencies"),
+            patch("server._start_server") as mock_start,
+        ):
+            main()
+            mock_start.assert_called_once()

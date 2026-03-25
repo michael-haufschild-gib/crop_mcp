@@ -8,7 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bootstrap import _auto_setup, _check_dependencies, _relaunch_in_venv, ensure_dependencies
+from bootstrap import (
+    _auto_setup,
+    _check_dependencies,
+    _in_correct_venv,
+    _relaunch_in_venv,
+    ensure_dependencies,
+)
 
 
 class TestCheckDependencies:
@@ -114,42 +120,87 @@ class TestAutoSetup:
             assert _auto_setup() is False
 
 
+class TestInCorrectVenv:
+    """Tests for _in_correct_venv — checks against the specific project venv."""
+
+    def test_true_when_prefix_matches_venv_dir(self, tmp_path: Path) -> None:
+        venv = tmp_path / "correct-venv"
+        venv.mkdir()
+        with patch("sys.prefix", str(venv)), patch("bootstrap.VENV_DIR", venv):
+            assert _in_correct_venv() is True
+
+    def test_false_when_prefix_is_different_venv(self, tmp_path: Path) -> None:
+        wrong_venv = tmp_path / "wrong-venv"
+        wrong_venv.mkdir()
+        correct_venv = tmp_path / "correct-venv"
+        correct_venv.mkdir()
+        with patch("sys.prefix", str(wrong_venv)), patch("bootstrap.VENV_DIR", correct_venv):
+            assert _in_correct_venv() is False
+
+    def test_false_when_not_in_any_venv(self, tmp_path: Path) -> None:
+        correct_venv = tmp_path / "correct-venv"
+        correct_venv.mkdir()
+        with patch("sys.prefix", "/usr"), patch("bootstrap.VENV_DIR", correct_venv):
+            assert _in_correct_venv() is False
+
+
 class TestRelaunchInVenv:
     """Tests for _relaunch_in_venv guard conditions."""
 
-    def test_noop_when_already_in_venv(self) -> None:
-        # sys.prefix != sys.base_prefix means we're already in a venv
-        # In the test environment, we ARE in a venv, so execv should not be called
-        with patch("os.execv") as mock_execv:
+    def test_noop_when_in_correct_venv(self, tmp_path: Path) -> None:
+        venv = tmp_path / "correct-venv"
+        venv.mkdir()
+        with (
+            patch("sys.prefix", str(venv)),
+            patch("bootstrap.VENV_DIR", venv),
+            patch("os.execv") as mock_execv,
+        ):
             _relaunch_in_venv()
             mock_execv.assert_not_called()
+
+    def test_relaunches_when_in_wrong_venv(self, tmp_path: Path) -> None:
+        wrong_venv = tmp_path / "wrong-venv"
+        wrong_venv.mkdir()
+        correct_venv = tmp_path / "correct-venv"
+        fake_python = correct_venv / "bin" / "python3"
+        fake_python.parent.mkdir(parents=True)
+        fake_python.touch()
+
+        with (
+            patch("sys.prefix", str(wrong_venv)),
+            patch("bootstrap.VENV_DIR", correct_venv),
+            patch("bootstrap.VENV_PYTHON", fake_python),
+            patch("os.execv") as mock_execv,
+        ):
+            _relaunch_in_venv()
+            mock_execv.assert_called_once()
+            assert mock_execv.call_args[0][0] == str(fake_python)
 
     def test_noop_when_venv_python_missing(self, tmp_path: Path) -> None:
         missing = tmp_path / "nonexistent" / "bin" / "python3"
         with (
-            patch("sys.prefix", "/usr"),
-            patch("sys.base_prefix", "/usr"),
+            patch("bootstrap._in_correct_venv", return_value=False),
             patch("bootstrap.VENV_PYTHON", missing),
             patch("os.execv") as mock_execv,
         ):
             _relaunch_in_venv()
             mock_execv.assert_not_called()
 
-    def test_calls_execv_when_outside_venv_and_python_exists(self, tmp_path: Path) -> None:
-        fake_python = tmp_path / "bin" / "python3"
+    def test_calls_execv_when_outside_any_venv_and_python_exists(self, tmp_path: Path) -> None:
+        correct_venv = tmp_path / "correct-venv"
+        fake_python = correct_venv / "bin" / "python3"
         fake_python.parent.mkdir(parents=True)
         fake_python.touch()
 
         with (
             patch("sys.prefix", "/usr"),
-            patch("sys.base_prefix", "/usr"),
+            patch("bootstrap.VENV_DIR", correct_venv),
             patch("bootstrap.VENV_PYTHON", fake_python),
             patch("os.execv") as mock_execv,
         ):
             _relaunch_in_venv()
             mock_execv.assert_called_once()
-            args = mock_execv.call_args[0]
-            assert args[0] == str(fake_python)
+            assert mock_execv.call_args[0][0] == str(fake_python)
 
 
 class TestEnsureDependencies:

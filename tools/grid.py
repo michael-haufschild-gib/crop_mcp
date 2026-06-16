@@ -74,8 +74,8 @@ def _draw_label_pill(
 ) -> None:
     """Draw a black pill background with colored text at pos (x, y)."""
     bbox = font.getbbox(label)
-    pw = (bbox[2] - bbox[0]) + pad * 2
-    ph = (bbox[3] - bbox[1]) + pad * 2
+    pw = int(bbox[2] - bbox[0]) + pad * 2
+    ph = int(bbox[3] - bbox[1]) + pad * 2
     x, y = pos
     draw.rectangle((x, y, x + pw, y + ph), fill=(0, 0, 0, 200))
     draw.text((x + pad, y + pad), label, fill=(*color, 255), font=font)
@@ -101,8 +101,8 @@ def _draw_major_gridline(
 
     label = f".{i}"
     bbox = font.getbbox(label)
-    pill_w = (bbox[2] - bbox[0]) + pad * 2
-    pill_h = (bbox[3] - bbox[1]) + pad * 2
+    pill_w = int(bbox[2] - bbox[0]) + pad * 2
+    pill_h = int(bbox[3] - bbox[1]) + pad * 2
 
     x_label_x = x - pill_w // 2
     y_label_y = y - pill_h // 2
@@ -137,7 +137,7 @@ def render_grid(img: Image.Image, source_path: str) -> str:
     # Thumbnail if either dimension exceeds the memory budget
     if img.size[0] > _GRID_MAX_DIM or img.size[1] > _GRID_MAX_DIM:
         img = img.copy()
-        img.thumbnail((_GRID_MAX_DIM, _GRID_MAX_DIM), Image.LANCZOS)
+        img.thumbnail((_GRID_MAX_DIM, _GRID_MAX_DIM), Image.Resampling.LANCZOS)
 
     w, h = img.size
     desaturated = ImageEnhance.Color(img.convert("RGB")).enhance(_SATURATION_FACTOR)
@@ -158,8 +158,8 @@ def render_grid(img: Image.Image, source_path: str) -> str:
 
     # Compute major label pill height so minor labels sit below/right of them
     _sample_bbox = font.getbbox(".1")
-    major_pill_h = (_sample_bbox[3] - _sample_bbox[1]) + pad * 2
-    major_pill_w = (_sample_bbox[2] - _sample_bbox[0]) + pad * 2
+    major_pill_h = int(_sample_bbox[3] - _sample_bbox[1]) + pad * 2
+    major_pill_w = int(_sample_bbox[2] - _sample_bbox[0]) + pad * 2
     minor_top_y = major_pill_h + 6
     minor_left_x = major_pill_w + 6
 

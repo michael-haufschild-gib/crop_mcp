@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
 from PIL import Image
@@ -53,6 +53,14 @@ class TestCropImage:
     def test_negative_padding_raises(self, synthetic_image: Path) -> None:
         with pytest.raises(ValueError, match="padding must be >= 0"):
             crop_image(str(synthetic_image), 0.0, 0.0, 1.0, 1.0, padding=-5)
+
+    def test_boolean_padding_raises(self, synthetic_image: Path) -> None:
+        with pytest.raises(ValueError, match="non-negative integer"):
+            crop_image(str(synthetic_image), 0.0, 0.0, 1.0, 1.0, padding=True)
+
+    def test_float_padding_raises(self, synthetic_image: Path) -> None:
+        with pytest.raises(ValueError, match="non-negative integer"):
+            crop_image(str(synthetic_image), 0.0, 0.0, 1.0, 1.0, padding=1.5)  # type: ignore[arg-type]
 
     def test_rgba_input_handled(self, tmp_path: Path) -> None:
         img = Image.new("RGBA", (100, 100), (255, 0, 0, 128))

@@ -51,6 +51,10 @@ class TestParseHex:
         with pytest.raises(ValueError, match="Invalid hex color"):
             _parse_hex("")
 
+    def test_non_string_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="expected a string"):
+            _parse_hex(123)  # type: ignore[arg-type]
+
     def test_just_hash_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid hex color"):
             _parse_hex("#")
@@ -253,3 +257,7 @@ class TestCheckContrast:
     def test_without_hash_accepted(self) -> None:
         result = check_contrast("FFFFFF", "000000")
         assert result["contrast_ratio"] == 21.0
+
+    def test_text_is_large_must_be_boolean(self) -> None:
+        with pytest.raises(ValueError, match="must be a boolean"):
+            check_contrast("#FFFFFF", "#000000", text_is_large="yes")  # type: ignore[arg-type]

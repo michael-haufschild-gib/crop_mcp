@@ -70,7 +70,7 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
     # Initialize centers using k-means++ for better convergence
     rng = np.random.default_rng(42)
     centers = np.empty((k, 3), dtype=np.float64)
-    centers[0] = pixels_f[rng.integers(n)]
+    centers[0] = pixels_f[int(rng.integers(n))]
 
     for i in range(1, k):
         # Distance from each point to nearest existing center
@@ -81,10 +81,10 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
         # Probability proportional to distance squared
         total_dist = dists.sum()
         if total_dist == 0:
-            idx = rng.integers(n)
+            idx = int(rng.integers(n))
         else:
             probs = dists / total_dist
-            idx = rng.choice(n, p=probs)
+            idx = int(rng.choice(n, p=probs))
         centers[i] = pixels_f[idx]
 
     # Iterate
@@ -101,7 +101,7 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
                 new_centers[i] = members.mean(axis=0)
             else:
                 # Empty cluster — reinitialize randomly
-                new_centers[i] = pixels_f[rng.integers(n)]
+                new_centers[i] = pixels_f[int(rng.integers(n))]
 
         # Check convergence
         if np.allclose(centers, new_centers, atol=1.0):
@@ -210,7 +210,7 @@ def extract_colors(
     """
     path = validate_image_path(image_path)
 
-    if not isinstance(n_colors, int) or n_colors < MIN_COLORS:
+    if isinstance(n_colors, bool) or not isinstance(n_colors, int) or n_colors < MIN_COLORS:
         raise ValueError(
             f"n_colors must be a positive integer, got {n_colors}.\n"
             f"Typical values: 3-10. Default is 6."
@@ -224,11 +224,11 @@ def extract_colors(
     region = _validate_region(x1, y1, x2, y2)
 
     try:
-        img = Image.open(path)
+        with Image.open(path) as opened:
+            img = opened.convert("RGB")
     except Exception as e:
         raise ValueError(f"Could not open image: {path}\nError: {e}") from e
 
-    img = img.convert("RGB")
     full_size = img.size
 
     if region is not None:
@@ -243,7 +243,7 @@ def extract_colors(
         )
 
     if img.size[0] > MAX_ANALYSIS_DIM or img.size[1] > MAX_ANALYSIS_DIM:
-        img.thumbnail((MAX_ANALYSIS_DIM, MAX_ANALYSIS_DIM), Image.LANCZOS)
+        img.thumbnail((MAX_ANALYSIS_DIM, MAX_ANALYSIS_DIM), Image.Resampling.LANCZOS)
 
     pixels = np.array(img).reshape(-1, 3)
     centers, labels = _kmeans(pixels, n_colors)

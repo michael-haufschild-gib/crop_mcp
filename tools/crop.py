@@ -69,6 +69,14 @@ class CropResult(TypedDict):
     crop_region_normalized: NormalizedRegion
 
 
+def _validate_padding(padding: int) -> None:
+    """Validate crop padding before pixel arithmetic."""
+    if isinstance(padding, bool) or not isinstance(padding, int):
+        raise ValueError(f"padding must be a non-negative integer, got {type(padding).__name__}")
+    if padding < 0:
+        raise ValueError(f"padding must be >= 0, got {padding}")
+
+
 def image_info(image_path: str) -> ImageInfoResult:
     """Return dimensions, metadata, and a coordinate-grid overlay for an image.
 
@@ -82,7 +90,8 @@ def image_info(image_path: str) -> ImageInfoResult:
     path = validate_image_path(image_path)
 
     try:
-        img = Image.open(path)
+        with Image.open(path) as opened:
+            img = opened.copy()
     except Exception as e:
         raise ValueError(
             f"Could not open image: {path}\n"
@@ -91,6 +100,7 @@ def image_info(image_path: str) -> ImageInfoResult:
         ) from e
 
     width, height = img.size
+    mode = img.mode
     file_size = path.stat().st_size
     longer_axis = "x" if width >= height else "y"
 
@@ -101,7 +111,7 @@ def image_info(image_path: str) -> ImageInfoResult:
         "height": height,
         "aspect_ratio": round(width / height, 4) if height > 0 else 0,
         "file_size_kb": round(file_size / 1024, 1),
-        "mode": img.mode,
+        "mode": mode,
         "pixels_per_percent": {
             "x": round(width * 0.01, 1),
             "y": round(height * 0.01, 1),
@@ -138,21 +148,17 @@ def crop_image(
     path = validate_image_path(image_path)
     validate_coordinates(x1, y1, x2, y2)
 
-    if padding < 0:
-        raise ValueError(f"padding must be >= 0, got {padding}")
+    _validate_padding(padding)
 
     try:
-        img = Image.open(path)
+        with Image.open(path) as opened:
+            img = opened.copy() if opened.mode in ("RGB", "RGBA") else opened.convert("RGB")
     except Exception as e:
         raise ValueError(
             f"Could not open image: {path}\n"
             f"Error: {e}\n"
             f"The file exists but may be corrupted or not a valid image."
         ) from e
-
-    # Convert to RGB if needed (handles RGBA, palette, etc.)
-    if img.mode not in ("RGB", "RGBA"):
-        img = img.convert("RGB")
 
     width, height = img.size
 

@@ -131,7 +131,7 @@ def _register_crop_tool(mcp_server: FastMCP) -> None:
             padding: Extra pixels around the crop region. Default: 20.
         """
         _log.info(
-            "tool=crop_to_magnify_image path=%s region=(%.2f,%.2f)-(%.2f,%.2f)",
+            "tool=crop_to_magnify_image path=%s region=(%s,%s)-(%s,%s)",
             image_path,
             x1,
             y1,
@@ -184,7 +184,7 @@ def _register_colors_tool(mcp_server: FastMCP) -> None:
             x2: Right edge of region (0.0-1.0).
             y2: Bottom edge of region (0.0-1.0).
         """
-        _log.info("tool=extract_colors path=%s n_colors=%d", image_path, n_colors)
+        _log.info("tool=extract_colors path=%s n_colors=%s", image_path, n_colors)
         return _run_tool(
             "extract_colors",
             _extract_colors,

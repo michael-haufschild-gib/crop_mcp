@@ -54,6 +54,11 @@ def _parse_hex(hex_str: str) -> tuple[int, int, int]:
     Raises:
         ValueError: If the string is not a valid 6-digit hex color.
     """
+    if not isinstance(hex_str, str):
+        raise ValueError(
+            f"Invalid hex color: expected a string, got {type(hex_str).__name__}.\n"
+            f"Expected format: '#RRGGBB' or 'RRGGBB' (6 hex digits)."
+        )
     m = _HEX_RE.match(hex_str.strip())
     if not m:
         raise ValueError(
@@ -274,6 +279,9 @@ def check_contrast(
         Dict with foreground/background color info, contrast_ratio,
         wcag_aa, wcag_aaa booleans, and a verdict string.
     """
+    if not isinstance(text_is_large, bool):
+        raise ValueError(f"text_is_large must be a boolean, got {type(text_is_large).__name__}.")
+
     fg_r, fg_g, fg_b = _parse_hex(foreground)
     bg_r, bg_g, bg_b = _parse_hex(background)
 

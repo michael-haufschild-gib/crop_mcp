@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
+from typing import cast
 from unittest.mock import patch
 
 from PIL import Image
@@ -13,7 +14,12 @@ from tools.grid import CYAN, YELLOW, render_grid
 
 def _color_distance(c1: tuple[int, ...], c2: tuple[int, int, int]) -> float:
     """Euclidean distance between two RGB colors (ignoring alpha)."""
-    return float(sum((a - b) ** 2 for a, b in zip(c1[:3], c2)) ** 0.5)
+    return float(sum((a - b) ** 2 for a, b in zip(c1[:3], c2, strict=True)) ** 0.5)
+
+
+def _pixel_tuple(img: Image.Image, xy: tuple[int, int]) -> tuple[int, ...]:
+    """Return a pixel as a tuple for RGB/RGBA test images."""
+    return cast("tuple[int, ...]", img.getpixel(xy))
 
 
 class TestGridRendering:
@@ -37,7 +43,7 @@ class TestGridRendering:
         # Sample pixel at the .5 gridline, middle of image
         x = int(0.5 * 400)
         y = 400 // 2
-        pixel = grid_img.getpixel((x, y))
+        pixel = _pixel_tuple(grid_img, (x, y))
         # Should be closer to yellow than to cyan or magenta
         dist_yellow = _color_distance(pixel, YELLOW)
         dist_cyan = _color_distance(pixel, CYAN)
@@ -55,7 +61,7 @@ class TestGridRendering:
         x = int(0.1 * 400)
         # Use y=28 (0.07) to avoid crossing any horizontal gridline
         y = int(0.07 * 400)
-        pixel = grid_img.getpixel((x, y))
+        pixel = _pixel_tuple(grid_img, (x, y))
         dist_cyan = _color_distance(pixel, CYAN)
         dist_yellow = _color_distance(pixel, YELLOW)
         assert dist_cyan < dist_yellow, f"Non-midpoint pixel {pixel} not cyan-ish"
@@ -72,10 +78,10 @@ class TestGridRendering:
         x = int(0.05 * 400)
         # Use y=28 (0.07) to avoid crossing any horizontal gridline
         y = int(0.07 * 400)
-        pixel = grid_img.getpixel((x, y))
+        pixel = _pixel_tuple(grid_img, (x, y))
         # Background is gray; magenta overlay should shift R and B channels up
         # relative to a non-gridline pixel
-        bg_pixel = grid_img.getpixel((int(0.07 * 400), y))
+        bg_pixel = _pixel_tuple(grid_img, (int(0.07 * 400), y))
         assert pixel[0] > bg_pixel[0] or pixel[2] > bg_pixel[2], (
             f"Minor gridline pixel {pixel} shows no magenta shift vs background {bg_pixel}"
         )

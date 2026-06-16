@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 from pathlib import Path
 
 __all__ = [
@@ -77,9 +78,14 @@ def validate_coordinates(x1: float, y1: float, x2: float, y2: float) -> None:
     coords = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
 
     for name, val in coords.items():
-        if not isinstance(val, (int, float)):
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
             raise ValueError(
-                f"'{name}' must be a number, got {type(val).__name__}.\n"
+                f"'{name}' must be a finite number, got {type(val).__name__}.\n"
+                f"Coordinates use a 0-1 scale: 0.0 = left/top edge, 1.0 = right/bottom edge."
+            )
+        if not math.isfinite(float(val)):
+            raise ValueError(
+                f"'{name}' must be finite, got {val}.\n"
                 f"Coordinates use a 0-1 scale: 0.0 = left/top edge, 1.0 = right/bottom edge."
             )
         if val < 0.0 or val > 1.0:

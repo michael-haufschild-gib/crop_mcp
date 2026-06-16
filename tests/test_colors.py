@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import pytest
@@ -75,6 +75,14 @@ class TestExtractColors:
     def test_n_colors_zero_raises(self, synthetic_image: Path) -> None:
         with pytest.raises(ValueError, match="positive integer"):
             extract_colors(str(synthetic_image), n_colors=0)
+
+    def test_n_colors_bool_raises(self, synthetic_image: Path) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            extract_colors(str(synthetic_image), n_colors=True)
+
+    def test_n_colors_float_raises(self, synthetic_image: Path) -> None:
+        with pytest.raises(ValueError, match="positive integer"):
+            extract_colors(str(synthetic_image), n_colors=2.5)  # type: ignore[arg-type]
 
     def test_n_colors_too_high_raises(self, synthetic_image: Path) -> None:
         with pytest.raises(ValueError, match="too high"):

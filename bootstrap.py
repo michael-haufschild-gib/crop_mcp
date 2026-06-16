@@ -75,7 +75,7 @@ def _in_correct_venv() -> bool:
     """Check if the current interpreter is the project's venv, not just any venv."""
     try:
         return Path(sys.prefix).resolve() == VENV_DIR.resolve()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
 
 

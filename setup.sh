@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Vision Tools MCP — Setup Script
 # Creates a virtualenv and installs dependencies.
-# Safe to re-run: skips steps that are already done.
+# Safe to re-run: reuses the venv and upgrades dependencies.
 
 set -euo pipefail
 
 VENV_DIR="$HOME/.vision-tools-env"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REQUIRED_PYTHON_VERSION="3.9"
+REQUIRED_PYTHON_VERSION="3.14"
 
 # Colors for output
 RED='\033[0;31m'
@@ -23,16 +23,9 @@ error() { echo -e "${RED}[✗]${NC} $1"; }
 find_python() {
     for cmd in python3 python; do
         if command -v "$cmd" &>/dev/null; then
-            local ver
-            ver=$("$cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
-            if [ -n "$ver" ]; then
-                local major minor
-                major=$(echo "$ver" | cut -d. -f1)
-                minor=$(echo "$ver" | cut -d. -f2)
-                if [ "$major" -ge 3 ] && [ "$minor" -ge 9 ]; then
-                    echo "$cmd"
-                    return 0
-                fi
+            if "$cmd" -c "import sys; raise SystemExit(sys.version_info < (3, 14))" 2>/dev/null; then
+                echo "$cmd"
+                return 0
             fi
         fi
     done
@@ -40,7 +33,7 @@ find_python() {
 }
 
 PYTHON_CMD=$(find_python) || {
-    error "Python 3.9+ is required but not found."
+    error "Python $REQUIRED_PYTHON_VERSION+ is required but not found."
     echo ""
     echo "  Install Python:"
     echo "    macOS:   brew install python3"
@@ -77,14 +70,14 @@ PYTHON="$VENV_DIR/bin/python3"
 # Upgrade pip first (silently)
 "$PIP" install --upgrade pip --quiet 2>/dev/null || true
 
-# Install all deps from the single source of truth: pyproject.toml
-# pip install -e ".[dev]" is idempotent — fast when already satisfied.
+# Install all deps from pyproject.toml. Eager upgrades are intentional: rerunning
+# setup should refresh old transitive dependencies, not only install missing ones.
 warn "Installing dependencies from pyproject.toml ..."
-"$PIP" install -e "$SCRIPT_DIR[dev]" --quiet || {
+"$PIP" install --upgrade --upgrade-strategy eager -e "$SCRIPT_DIR[dev]" --quiet || {
     error "Failed to install dependencies."
     echo ""
     echo "  Try running manually:"
-    echo "    $PIP install -e \"$SCRIPT_DIR[dev]\""
+    echo "    $PIP install --upgrade --upgrade-strategy eager -e \"$SCRIPT_DIR[dev]\""
     echo ""
     exit 1
 }

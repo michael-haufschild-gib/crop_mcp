@@ -2,7 +2,7 @@
 
 **Purpose**: Instructions for adding tools, modifying existing ones, and navigating the codebase.
 **Read This When**: Adding a new tool, modifying tool behavior, or changing server configuration.
-**Stack**: Python 3.9+, FastMCP (stdio), Pillow, numpy
+**Stack**: Python 3.14+, FastMCP (stdio), Pillow, numpy
 
 ## File Placement
 

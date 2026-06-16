@@ -2,7 +2,7 @@
 
 **Purpose**: Instructions for testing tools and verifying changes.
 **Read This When**: Modifying a tool, adding a new tool, or verifying the server works.
-**Stack**: Python 3.9+, pytest, mypy --strict
+**Stack**: Python 3.14+, pytest, mypy --strict
 
 ## Test Commands
 

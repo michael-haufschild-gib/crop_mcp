@@ -13,16 +13,16 @@ An MCP server that gives Claude Code four image analysis tools for inspecting sc
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.14+
 - macOS, Linux, or WSL
 
 ### Runtime dependencies
 
 | Package | Version |
 |-|-|
-| mcp[cli] | >=1.0, <3 |
-| Pillow | >=10, <12 |
-| numpy | >=1.24, <3 |
+| mcp[cli] | >=1.27, <3 |
+| Pillow | >=12.2, <13 |
+| numpy | >=2.4, <2.5 |
 
 ## Setup
 

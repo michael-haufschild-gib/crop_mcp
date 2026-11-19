@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import numpy as np
 from PIL import Image
 
-from .validators import validate_coordinates, validate_image_path
+from .validators import pixel_edge, read_image, validate_coordinates, validate_image_path
 
 __all__ = ["extract_colors"]
 
@@ -31,6 +31,8 @@ class ExtractColorsResult(TypedDict):
     colors: list[ColorEntry]
     image_size: list[int]
     region_analyzed: str
+    composited_on: NotRequired[str]
+    region_px: NotRequired[list[int]]
 
 
 def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray, np.ndarray]:
@@ -61,7 +63,7 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
         # Fewer unique colors than requested clusters — just return the unique colors
         centers = unique_colors.astype(np.float64)
         # Assign each pixel to its exact color
-        labels = np.zeros(n, dtype=np.int32)
+        labels = np.zeros(n, dtype=np.intp)
         for i, c in enumerate(centers):
             mask = np.all(pixels == c.astype(pixels.dtype), axis=1)
             labels[mask] = i
@@ -161,24 +163,22 @@ def _crop_to_region(
 ) -> tuple[Image.Image, str]:
     """Crop image to normalized region. Returns (cropped_image, region_description)."""
     w, h = img.size
-    cropped = img.crop((int(x1 * w), int(y1 * h), int(x2 * w), int(y2 * h)))
+    cropped = img.crop((pixel_edge(x1, w), pixel_edge(y1, h), pixel_edge(x2, w), pixel_edge(y2, h)))
     return cropped, f"({x1:.2f}, {y1:.2f}) to ({x2:.2f}, {y2:.2f})"
 
 
-def _centers_to_color_list(
-    centers: np.ndarray,
+def _cluster_colors(
+    pixels: np.ndarray,
     labels: np.ndarray,
 ) -> list[ColorEntry]:
-    """Convert k-means centers and labels to sorted color result list."""
+    """Report the most frequent original shade in each cluster and its coverage."""
     total = len(labels)
     results: list[ColorEntry] = []
-    for i, center in enumerate(centers):
-        count = int(np.sum(labels == i))
-        if count == 0:
-            continue
-        r = max(0, min(255, round(float(center[0]))))
-        g = max(0, min(255, round(float(center[1]))))
-        b = max(0, min(255, round(float(center[2]))))
+    for i in np.unique(labels):
+        members = pixels[labels == i]
+        shades, frequency = np.unique(members, axis=0, return_counts=True)
+        r, g, b = map(int, shades[frequency.argmax()])
+        count = len(members)
         results.append(
             {
                 "hex": f"#{r:02X}{g:02X}{b:02X}",
@@ -188,6 +188,26 @@ def _centers_to_color_list(
         )
     results.sort(key=lambda c: float(c["percentage"]), reverse=True)
     return results
+
+
+def _dominant_colors(img: Image.Image, n_colors: int) -> list[ColorEntry]:
+    """Count flat fills exactly, sampling and clustering only when necessary."""
+    exact = img.getcolors(n_colors)
+    if exact is not None:
+        total = img.width * img.height
+        return [
+            {
+                "hex": f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}",
+                "percentage": round(count / total * 100, 1),
+                "rgb": list(rgb),
+            }
+            for count, rgb in sorted(exact, reverse=True)
+            if isinstance(rgb, tuple)
+        ]
+    img.thumbnail((MAX_ANALYSIS_DIM, MAX_ANALYSIS_DIM), Image.Resampling.NEAREST)
+    pixels = np.array(img).reshape(-1, 3)
+    _, labels = _kmeans(pixels, n_colors)
+    return _cluster_colors(pixels, labels)
 
 
 def extract_colors(
@@ -223,11 +243,7 @@ def extract_colors(
 
     region = _validate_region(x1, y1, x2, y2)
 
-    try:
-        with Image.open(path) as opened:
-            img = opened.convert("RGB")
-    except Exception as e:
-        raise ValueError(f"Could not open image: {path}\nError: {e}") from e
+    img = read_image(path)
 
     full_size = img.size
 
@@ -242,14 +258,20 @@ def extract_colors(
             f"Try a larger region or the full image."
         )
 
-    if img.size[0] > MAX_ANALYSIS_DIM or img.size[1] > MAX_ANALYSIS_DIM:
-        img.thumbnail((MAX_ANALYSIS_DIM, MAX_ANALYSIS_DIM), Image.Resampling.LANCZOS)
+    transparent = img.has_transparency_data
+    if transparent:
+        img = Image.alpha_composite(Image.new("RGBA", img.size, "white"), img.convert("RGBA"))
+    img = img.convert("RGB")
 
-    pixels = np.array(img).reshape(-1, 3)
-    centers, labels = _kmeans(pixels, n_colors)
-
-    return {
-        "colors": _centers_to_color_list(centers, labels),
+    result: ExtractColorsResult = {
+        "colors": _dominant_colors(img, n_colors),
         "image_size": list(full_size),
         "region_analyzed": region_str,
     }
+    if transparent:
+        result["composited_on"] = "#FFFFFF"
+    if region is not None:
+        result["region_px"] = [
+            pixel_edge(v, dim) for v, dim in zip(region, full_size * 2, strict=True)
+        ]
+    return result

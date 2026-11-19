@@ -120,11 +120,11 @@ def _contrast_ratio(lum1: float, lum2: float) -> float:
         lum2: Relative luminance of second color.
 
     Returns:
-        Contrast ratio (1.0 to 21.0), rounded to 2 decimal places.
+        Contrast ratio (1.0 to 21.0), at full precision.
     """
     lighter = max(lum1, lum2)
     darker = min(lum1, lum2)
-    return round((lighter + 0.05) / (darker + 0.05), 2)
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 # --- HSL conversion ---
@@ -296,6 +296,9 @@ def check_contrast(
     passes_aa = ratio >= aa_threshold
     passes_aaa = ratio >= aaa_threshold
 
+    # Preserve enough precision to explain a verdict near the threshold.
+    if round(ratio, 2) not in (aa_threshold, aaa_threshold):
+        ratio = round(ratio, 2)
     if passes_aaa:
         verdict = f"PASS AA+AAA — {ratio}:1 ({size_label} text)"
     elif passes_aa:

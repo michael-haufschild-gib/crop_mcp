@@ -54,6 +54,32 @@ class TestKmeans:
 
 
 class TestExtractColors:
+    def test_hidden_rgb_does_not_appear_in_palette(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        image = Image.new("RGBA", (40, 20), (0, 255, 0, 0))
+        image.paste((0, 0, 255, 255), (0, 0, 10, 20))
+        path = tmp_path / "transparent.png"
+        image.save(path)
+        palette = extract_colors(str(path), 2)
+        assert palette["composited_on"] == "#FFFFFF"
+        assert {c["hex"]: c["percentage"] for c in palette["colors"]} == {
+            "#FFFFFF": 75,
+            "#0000FF": 25,
+        }
+
+    def test_cluster_representative_is_an_observed_source_pixel(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        image = Image.new("RGB", (821, 79), "#AF6A32")
+        image.paste("#3C6474", (0, 0, 605, 79))
+        path = tmp_path / "banner.png"
+        image.save(path)
+        result = extract_colors(str(path), n_colors=1)
+        assert result["colors"] == [{"hex": "#3C6474", "rgb": [60, 100, 116], "percentage": 100.0}]
+        exact = extract_colors(str(path), n_colors=2)
+        assert exact["colors"][0]["percentage"] == round(605 / 821 * 100, 1)
+
     """Tests for extract_colors."""
 
     def test_two_colors_from_synthetic(self, synthetic_image: Path) -> None:

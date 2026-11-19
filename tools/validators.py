@@ -6,15 +6,35 @@ import contextlib
 import math
 from pathlib import Path
 
+from PIL import Image, ImageOps
+
 __all__ = [
     "SUPPORTED_EXTENSIONS",
     "cleanup_temp_dir",
+    "pixel_edge",
+    "read_image",
     "validate_coordinates",
     "validate_image_path",
 ]
 
 # Supported image extensions (lowercase)
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+
+
+def pixel_edge(fraction: float, dimension: int) -> int:
+    """Floor a normalized edge, preserving integer edges on a float round trip."""
+    scaled = fraction * dimension
+    nearest = round(scaled)
+    return nearest if abs(scaled - nearest) <= math.ulp(scaled) else int(scaled)
+
+
+def read_image(path: Path) -> Image.Image:
+    """Use the same visual orientation as image viewers, across all screenshot tools."""
+    try:
+        with Image.open(path) as opened:
+            return ImageOps.exif_transpose(opened)
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise ValueError(f"Could not open image: {path}\nError: {exc}") from exc
 
 
 def validate_image_path(image_path: str) -> Path:

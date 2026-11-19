@@ -23,20 +23,24 @@ def _verify_footprint(scene: str, density: Resolution, tmp_path: Path) -> None:
     key = render(scene, definition, path, density)
     with Image.open(ASSETS / scene / "foreground.png") as source:
         alpha = source.getchannel("A").getbbox()
-        assert alpha and 0 < alpha[0] < alpha[2] < source.width
+        assert alpha is not None
+        assert 0 < alpha[0] < alpha[2] < source.width
         assert 0 < alpha[1] < alpha[3] < source.height
     scale = scene_scale(scene, density)
     with Image.open(path) as finished, backdrop(scene, scale) as pristine:
         observed = ImageChops.difference(finished, pristine).getbbox()
-        assert observed is not None and observed == key["box"], (scene, density)
+        assert observed is not None
+        assert observed == key["box"], (scene, density)
         x, y, r, b = observed
         w, h = finished.size
         assert [x, y] == [round(coord * scale) for coord in definition["at"]]
         if density == "5k":
-            assert w <= 5120 and h <= 2880 and (w == 5120 or h == 2880)
+            assert w <= 5120
+            assert h <= 2880
+            assert w == 5120 or h == 2880
         assert key["xywh_normalized"] == (x / w, y / h, (r - x) / w, (b - y) / h)
         fractions = [x / w, y / h, r / w, b / h]
-        assert score(fractions, key)["exact"]
+        assert score(fractions, key)["exact"] is True
         crop = crop_image(
             str(path), x / w, y / h, r / w, b / h, str(tmp_path / "crop.png"), padding=0
         )
@@ -78,7 +82,7 @@ def test_each_edge_and_size_error_are_scored() -> None:
         "box": (15, 16, 40, 48),
         "xywh_normalized": (0.15, 0.20, 0.25, 0.40),
     }
-    assert score([0.17, 0.20, 0.40, 0.60], key)["pass"]
+    assert score([0.17, 0.20, 0.40, 0.60], key)["pass"] is True
     result = score([0.18, 0.20, 0.40, 0.60], key)
-    assert not result["pass"]
+    assert result["pass"] is False
     assert result["xywh_error_px"] == [3, 0, -3, 0]

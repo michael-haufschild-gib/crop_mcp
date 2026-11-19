@@ -4,14 +4,36 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from tools.colors import extract_colors
 from tools.crop import crop_image, image_info
 
+pytestmark = pytest.mark.integration
+
 
 class TestFullPipeline:
     """Round-trip tests: image → info → crop → colors."""
+
+    def test_measured_bounds_select_identical_pixels_in_crop_and_palette(
+        self, tmp_path: Path
+    ) -> None:
+        # 1/49 * 49 and 15/22 * 22 land just below their original pixel edges.
+        image = Image.new("RGB", (49, 22), "white")
+        image.paste("#112233", (1, 5, 4, 15))
+        path = tmp_path / "component.png"
+        image.save(path)
+        measurement = image_info(str(path), measure_at=[2 / 49, 8 / 22])["measured_fill"]
+        assert measurement["bounds_px"] == [1, 5, 4, 15]
+        x1, y1, x2, y2 = measurement["bounds_normalized"]
+        crop = crop_image(str(path), x1, y1, x2, y2, padding=0)
+        with Image.open(crop["output_path"]) as saved:
+            assert saved.size == (3, 10)
+            assert saved.getcolors() == [(30, (17, 34, 51))]
+        palette = extract_colors(str(path), x1=x1, y1=y1, x2=x2, y2=y2)
+        assert palette["region_px"] == measurement["bounds_px"]
+        assert palette["colors"] == [{"hex": "#112233", "rgb": [17, 34, 51], "percentage": 100.0}]
 
     def test_info_then_crop_then_colors(self, synthetic_image: Path) -> None:
         """Full pipeline: get info, crop the left half, extract its color."""
@@ -19,13 +41,14 @@ class TestFullPipeline:
         info = image_info(str(synthetic_image))
         assert info["width"] == 200
         assert info["height"] == 100
-        assert Path(info["grid_image"]).exists()
+        with Image.open(info["grid_image"]) as grid:
+            assert grid.size == (200, 100)
+            assert grid.format == "PNG"
 
         # Step 2: Crop the left half (should be pure red)
         crop_result = crop_image(str(synthetic_image), 0.0, 0.0, 0.5, 1.0, padding=0)
         assert crop_result["width"] == 100
         assert crop_result["height"] == 100
-        assert Path(crop_result["output_path"]).exists()
 
         # Step 3: Extract colors from the cropped region
         color_result = extract_colors(crop_result["output_path"], n_colors=1)
@@ -61,5 +84,5 @@ class TestFullPipeline:
         crop_result = crop_image(grid_path, 0.0, 0.0, 0.5, 0.5, padding=0)
         assert crop_result["width"] == 100
         assert crop_result["height"] == 50
-        cropped = Image.open(crop_result["output_path"])
-        assert cropped.size == (100, 50)
+        with Image.open(crop_result["output_path"]) as cropped:
+            assert cropped.size == (100, 50)

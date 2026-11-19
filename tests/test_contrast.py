@@ -231,8 +231,6 @@ class TestCheckContrast:
         result = check_contrast("#FF0000", "#0000FF")
         fg = result["foreground"]
         bg = result["background"]
-        assert isinstance(fg, dict)
-        assert isinstance(bg, dict)
         assert fg["hex"] == "#FF0000"
         assert bg["hex"] == "#0000FF"
 
@@ -244,12 +242,10 @@ class TestCheckContrast:
     def test_color_info_has_correct_conversions(self) -> None:
         result = check_contrast("#FF0000", "#000000")
         fg = result["foreground"]
-        assert isinstance(fg, dict)
         assert fg["hex"] == "#FF0000"
         assert fg["rgb"] == [255, 0, 0]
         assert fg["hsl"] == [0.0, 100.0, 50.0]
         oklch = fg["oklch"]
-        assert isinstance(oklch, list)
         assert oklch[0] == pytest.approx(0.6280, abs=0.01)  # L
 
     def test_verdict_contains_ratio(self) -> None:

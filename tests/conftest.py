@@ -4,12 +4,29 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from PIL import Image
 
+from tools import runtime
 
-@pytest.fixture()  # type: ignore[untyped-decorator]
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+
+@pytest.fixture(autouse=True)
+def _isolate_image_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep generated images and LRU eviction inside this test's workspace."""
+    owner = runtime.ImageRuntime(tmp_path / "runtime")
+    monkeypatch.setattr(runtime, "runtime", owner)
+    try:
+        yield
+    finally:
+        owner.close()
+
+
+@pytest.fixture
 def synthetic_image(tmp_path: Path) -> Path:
     """200x100 image: left half red, right half blue. Same as server.py self-test."""
     img = Image.new("RGB", (200, 100))
@@ -20,7 +37,7 @@ def synthetic_image(tmp_path: Path) -> Path:
     return path
 
 
-@pytest.fixture()  # type: ignore[untyped-decorator]
+@pytest.fixture
 def solid_color_image(tmp_path: Path) -> Callable[[tuple[int, int, int], tuple[int, int]], Path]:
     """Factory fixture: creates a solid-color image of given color and size."""
     _counter = [0]

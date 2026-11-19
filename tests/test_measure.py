@@ -17,7 +17,7 @@ def test_fill_excludes_disconnected_swatch_and_includes_holes() -> None:
     d.rectangle((98, 62, 128, 72), fill="#ad754c")  # diagonal-only contact
     result = measure_fill(img, (29 / 149, 14 / 83))
     assert result["bounds_px"] == [29, 14, 98, 62]
-    assert result["width"] == 69 and result["height"] == 48
+    assert (result["width"], result["height"]) == (69, 48)
 
 
 def test_invalid_measurement_point(tmp_path: Path) -> None:
@@ -45,3 +45,12 @@ def test_measurement_crop_and_colors_share_display_orientation(tmp_path: Path) -
     result = extract_colors(str(path), 1, 0, 0, 1, 0.2)
     assert result["colors"][0]["hex"] == "#FF0000"
     assert result["region_px"] == [0, 0, 80, 24]
+
+
+def test_winding_fill_with_an_alpha_boundary() -> None:
+    image = Image.new("RGBA", (51, 29), (10, 20, 30, 128))
+    draw = ImageDraw.Draw(image)
+    fill = (10, 20, 30, 127)
+    draw.line([(5, 26), (5, 3), (46, 3), (46, 26), (17, 26), (17, 9)], fill=fill)
+    draw.point((47, 27), fill=fill)
+    assert measure_fill(image, [17 / 51, 9 / 29])["bounds_px"] == [5, 3, 47, 27]

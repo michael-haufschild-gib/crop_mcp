@@ -73,8 +73,8 @@ class TestValidateCoordinates:
         validate_coordinates(0.0, 0.0, 0.01, 0.01)  # no exception
 
     @pytest.mark.parametrize(
-        "coord_name,kwargs",
-        [  # type: ignore[untyped-decorator]
+        ("coord_name", "kwargs"),
+        [
             ("x1", {"x1": -0.1, "y1": 0.0, "x2": 1.0, "y2": 1.0}),
             ("x2", {"x1": 0.0, "y1": 0.0, "x2": 1.1, "y2": 1.0}),
             ("y1", {"x1": 0.0, "y1": -0.5, "x2": 1.0, "y2": 1.0}),
@@ -82,7 +82,7 @@ class TestValidateCoordinates:
         ],
     )
     def test_out_of_range(self, coord_name: str, kwargs: dict[str, float]) -> None:
-        with pytest.raises(ValueError, match="out of range"):
+        with pytest.raises(ValueError, match=rf"'{coord_name}'.*out of range"):
             validate_coordinates(**kwargs)
 
     def test_x1_equals_x2(self) -> None:
@@ -109,7 +109,32 @@ class TestValidateCoordinates:
         with pytest.raises(ValueError, match="finite number"):
             validate_coordinates(True, 0.0, 1.0, 1.0)
 
-    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])  # type: ignore[untyped-decorator]
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
     def test_non_finite_input_rejected(self, bad_value: float) -> None:
         with pytest.raises(ValueError, match="must be finite"):
             validate_coordinates(bad_value, 0.0, 1.0, 1.0)
+
+
+def test_input_pixel_budget_is_checked_before_decode(
+    synthetic_image: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PIL import Image
+
+    from tools import validators
+
+    def unexpected_decode(_img: Image.Image) -> None:
+        pytest.fail("Oversized image was decoded")
+
+    monkeypatch.setattr(validators, "_MAX_PIXELS", 100)
+    monkeypatch.setattr(Image.Image, "load", unexpected_decode)
+    with pytest.raises(ValueError, match="100-pixel limit"), validators.open_image(synthetic_image):
+        pytest.fail("Oversized image was accepted")
+
+
+def test_retained_image_outlives_the_source_file(synthetic_image: Path) -> None:
+    from tools.validators import read_image
+
+    with read_image(synthetic_image) as retained:
+        synthetic_image.unlink()
+        assert retained.getpixel((0, 0)) == (255, 0, 0)
+        assert retained.getpixel((199, 0)) == (0, 0, 255)

@@ -80,13 +80,14 @@ class TestExtractColors:
         exact = extract_colors(str(path), n_colors=2)
         assert exact["colors"][0]["percentage"] == round(605 / 821 * 100, 1)
 
-    """Tests for extract_colors."""
-
     def test_two_colors_from_synthetic(self, synthetic_image: Path) -> None:
         result = extract_colors(str(synthetic_image), n_colors=2)
-        hexes = {c["hex"] for c in result["colors"]}
-        assert "#FF0000" in hexes
-        assert "#0000FF" in hexes
+        assert sorted(result["colors"], key=lambda entry: entry["hex"]) == [
+            {"hex": "#0000FF", "rgb": [0, 0, 255], "percentage": 50.0},
+            {"hex": "#FF0000", "rgb": [255, 0, 0], "percentage": 50.0},
+        ]
+        assert result["image_size"] == [200, 100]
+        assert result["region_analyzed"] == "full image"
 
     def test_region_left_half_only_red(self, synthetic_image: Path) -> None:
         result = extract_colors(str(synthetic_image), n_colors=2, x1=0.0, y1=0.0, x2=0.5, y2=1.0)
@@ -114,28 +115,9 @@ class TestExtractColors:
         with pytest.raises(ValueError, match="too high"):
             extract_colors(str(synthetic_image), n_colors=21)
 
-    def test_percentages_sum_to_100(self, synthetic_image: Path) -> None:
-        result = extract_colors(str(synthetic_image), n_colors=2)
-        total = sum(c["percentage"] for c in result["colors"])
-        assert abs(total - 100.0) < 1.0
-
     def test_return_dict_keys(self, synthetic_image: Path) -> None:
         result = extract_colors(str(synthetic_image), n_colors=2)
         assert set(result.keys()) == {"colors", "image_size", "region_analyzed"}
-
-    def test_color_entry_structure_and_values(self, synthetic_image: Path) -> None:
-        result = extract_colors(str(synthetic_image), n_colors=2)
-        for color in result["colors"]:
-            # Verify hex format: #RRGGBB
-            assert isinstance(color["hex"], str)
-            assert len(color["hex"]) == 7
-            assert color["hex"][0] == "#"
-            int(color["hex"][1:], 16)  # raises ValueError if not valid hex
-            # Verify RGB values are in valid range
-            assert len(color["rgb"]) == 3
-            assert all(0 <= v <= 255 for v in color["rgb"])
-            # Verify percentage is a positive number
-            assert 0.0 < color["percentage"] <= 100.0
 
     def test_solid_color_image(
         self,

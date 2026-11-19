@@ -1,0 +1,11 @@
+# Image operations are reusable without the stdio server, setup code or test suite.
+extend = "../pyproject.toml"
+
+[lint]
+extend-select = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"server".msg = "Register MCP tools in server.py."
+"pymcp".msg = "Keep MCP protocol types and handlers in server.py."
+"bootstrap".msg = "Keep installation and interpreter selection in bootstrap.py."
+"tests".msg = "Production image operations cannot depend on test fixtures."

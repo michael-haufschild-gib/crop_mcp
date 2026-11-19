@@ -91,7 +91,7 @@ def generate_large_with_markers(width: int = 2000, height: int = 1000) -> Path:
     ]
     for cx, cy in markers:
         draw.rectangle(
-            (cx - marker_half, cy - marker_half, cx + marker_half, cy + marker_half),
+            (cx - marker_half, cy - marker_half, cx + marker_half - 1, cy + marker_half - 1),
             fill=MARKER_COLOR,
         )
 

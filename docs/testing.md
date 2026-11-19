@@ -124,7 +124,17 @@ The checklist covers all 4 tools across 13 test cases, including a full pipeline
 
 ## Test Images
 
-Automated tests use synthetic images from fixtures exclusively. `tests/live_qa_images/` contains generated images for manual QA (gitignored). Real screenshots may exist in `screenshots/` for manual verification only.
+### Blind screenshot geometry
+
+Each case consists of a generated website, app or game background and one independently generated transparent foreground. The renderer trims the foreground, scales it, clears resampling fringes below alpha 16/255, and trims it again. It pastes the element once. The bounding box of the RGB difference between the entire composite and its pristine background must equal the placement box before a trial can start. The answer key records source dimensions, the half-open pixel box, normalized position and size, and the composite hash.
+
+Generate the composites and key with `python -m tests.composite_geometry tests/live_qa_images/single-target`. Use `--density 2` to double the background resolution and rasterize the foreground at twice its native placement width. Use `--fit-5k` to preserve the aspect ratio inside a 5120 × 2880 viewport. The same PNG is attached in every condition at a given size.
+
+Run `python -m tests.cold_geometry --scene ruins --density 1` for one unaided/aided pair. Omit `--scene` for all nine. The evaluator needs an authenticated Codex CLI with image input. For each trial it starts a fresh ephemeral session in a directory containing only the finished screenshot. The prompt names one target and asks for its four normalized edges. It records each MCP call, rejects unauthorized tool use, and keeps the background, foreground, and answer key out of the model context.
+
+The scorer rounds predicted fractions to the nearest source pixel and reports signed errors for left, top, width and height. The original pass criterion requires all four edges to fall within two source pixels. The report also counts cases where position, width and height each fall within two source pixels. An exact box has zero error on every edge. The first three scenes are for development and the other six are held out. [Single-target results](benchmarks/single-target.md)
+
+The native-resolution follow-up repeats every scene and reports the key and drone heights separately. It compares screenshot-only sessions, the previous MCP, and two crop changes. [Native height results and original pixels](benchmarks/native-height.md)
 
 ## Common Mistakes
 

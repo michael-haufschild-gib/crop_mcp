@@ -1,8 +1,5 @@
 # Vision Tools Awareness
 
-You have MCP tools for image analysis: `crop_to_magnify_image` (magnifying glass for regions), `extract_colors` (exact hex values), and `get_image_coordinates_grid` (grid overlay for coordinate planning).
+For screenshot positions or sizes, call `get_image_coordinates_grid` on the original file. Use `measure_at` inside a flat fill to measure its connected bounds, or use `crop_to_magnify_image` with `show_grid=true` for textured elements and fine details. Both tools show the image inline.
 
-Remember these exist when:
-- You're unsure about text, labels, or small UI details in a screenshot
-- You're about to guess a hex color from visual inspection
-- A user asks you to look at a specific region of an image
+Use `extract_colors` on the original region for palette values and `check_contrast` for WCAG text contrast.

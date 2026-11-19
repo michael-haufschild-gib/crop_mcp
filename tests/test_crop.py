@@ -187,3 +187,42 @@ class TestImageInfo:
     def test_mode_field_present(self, synthetic_image: Path) -> None:
         info = image_info(str(synthetic_image))
         assert info["mode"] == "RGB"
+
+
+def test_detail_checks_locate_thin_extensions_in_source_pixels(tmp_path: Path) -> None:
+    scene = Image.new("RGB", (100, 80), (84, 79, 70))
+    for y in range(24, 52):
+        scene.putpixel((41, y), (126, 96 + (y % 2) * 17, 75))
+    for x in range(41, 67):
+        scene.putpixel((x, 44), (126, 96 + (x % 2) * 17, 75))
+    scene.putpixel((30, 25), (250, 40, 175))  # Isolated background speck.
+    path = tmp_path / "thin.png"
+    scene.save(path)
+    result = crop_image(
+        str(path),
+        0.34,
+        31 / 80,
+        0.62,
+        50 / 80,
+        str(tmp_path / "out.png"),
+        padding=10,
+        show_detail=True,
+    )
+    assert result["edge_checks_px"] == {
+        "top": [(41, 24)],
+        "bottom": [(41, 51)],
+        "right": [(66, 44)],
+    }
+
+
+def test_detail_preserves_rgb_png_transparency(tmp_path: Path) -> None:
+    scene = Image.new("RGB", (20, 20), "magenta")
+    scene.paste("green", (8, 8, 12, 12))
+    path = tmp_path / "keyed.png"
+    scene.save(path, transparency=(255, 0, 255))
+    result = crop_image(str(path), 0.4, 0.4, 0.6, 0.6, padding=8, show_detail=True)
+    for view_path in (result["grid_image"], result["detail_image"]):
+        with Image.open(view_path) as view:
+            alpha = view.getchannel("A")
+            assert alpha.getpixel((view.width // 2, view.height // 2)) == 255
+            assert alpha.getpixel((view.width // 2, view.height // 2 - 6 * 8)) == 0

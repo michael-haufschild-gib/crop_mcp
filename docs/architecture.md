@@ -1,124 +1,27 @@
-# Architecture Guide for LLM Coding Agents
+# Vision Tools MCP architecture
 
-**Purpose**: Instructions for adding tools, modifying existing ones, and navigating the codebase.
-**Read This When**: Adding a new tool, modifying tool behavior, or changing server configuration.
-**Stack**: Python 3.14+, FastMCP (stdio), Pillow, numpy
+The host starts one Python process and communicates over stdio. PyMCP Kit handles protocol negotiation, tool discovery and calls. The server registers four tool names. It sends logs to stderr. [MCP stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio)
 
-## File Placement
+| File | Responsibility |
+|---|---|
+| `server.py` | Register tool descriptions and schemas from their Python signatures. Serialize results and encode bounded inline PNG previews. |
+| `bootstrap.py` | Use an installed interpreter directly, or prepare the checkout environment for existing host registrations. |
+| `tools/crop.py` | Validate requested bounds, clamp padding, save the raw crop, return the actual source region. |
+| `tools/grid.py` | Overlay a normalized grid on the full image. On zoomed crops, draw original pixel and normalized rulers in the margins. |
+| `tools/edge_detail.py` | Highlight fine color changes and locate possible protrusions in the padding of a proposed box. |
+| `tools/measure.py` | Find the four-connected component at a point with exactly matching RGBA values and return its half-open bounding box. |
+| `tools/colors.py` | Count an exact small palette or cluster sampled source pixels and return a representative observed shade per cluster. |
+| `tools/contrast.py` | Convert sRGB, HSL and OKLCH and evaluate WCAG text thresholds using the unrounded ratio. |
+| `tools/validators.py` | Validate paths and coordinates, convert normalized edges to source pixels, and evict old temporary images. |
 
-| Type | Location | Example |
-|-|-|-|
-| Shared validators & utilities | `tools/validators.py` | `validate_image_path`, `cleanup_temp_dir` |
-| Tool implementation | `tools/{name}.py` | `tools/crop.py`, `tools/colors.py`, `tools/grid.py`, `tools/contrast.py` |
-| MCP server wiring | `server.py` | Tool registration, transport config |
-| Venv bootstrapping | `bootstrap.py` | Dependency checking, auto-setup, venv relaunching |
-| Setup/install | `setup.sh` | Venv creation, dependency install |
-| Tests | `tests/test_{name}.py` | `test_crop.py`, `test_colors.py`, `test_contrast.py` |
-| Live QA images + checklist | `tests/generate_live_images.py`, `tests/live_qa_checklist.md` | Manual MCP testing procedure |
+## Tool contract
 
-## Module Dependency Flow
+Inputs use normalized coordinates. Pixel boxes include their left and top edges and exclude their right and bottom edges. The crop metadata includes both the exact pixel edges and those edges divided by the original dimensions. A normalized edge obtained from a pixel box can be passed back to the crop tool.
 
-```
-bootstrap.py (stdlib only — no project dependencies)
-server.py → bootstrap.py
-          → tools/crop.py     → tools/grid.py → tools/validators.py
-          → tools/colors.py   ─────────────→ tools/validators.py
-          → tools/contrast.py (stdlib only — no tools/ dependencies)
-```
+Implementations return typed dictionaries. The server puts the JSON representation in the first MCP text block. Grid and crop add an MCP image block, while retaining full-resolution crop and annotated-grid paths for filesystem callers. For invalid image inputs, the tool returns a JSON error and sets the MCP error flag. Unexpected exceptions go to stderr and the client receives a short diagnostic. [MCP tool result examples](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-result)
 
-No circular dependencies. `bootstrap.py` uses only stdlib. Image tool modules import validators from `tools/validators.py`. `tools/contrast.py` uses only stdlib (`math`, `re`).
+Implement image operations in `tools/` and keep the transport boundary in `server.py`. Changes to a public tool must work through a real stdio call. [Testing guide](testing.md)
 
-## How to Add a New Tool
+When a caller requests `show_detail`, the crop returns two inline PNGs with identical source rulers. The first shows natural colors. The second draws the proposed box over a grayscale crop. Cyan highlights local changes in red-minus-green and blue-minus-green along the horizontal and vertical axes. The previews share a display scale and total byte budget. [Image gradients](https://docs.opencv.org/4.13.0/d5/d0f/tutorial_py_gradients.html)
 
-**Template** (`tools/new_tool.py`):
-
-```python
-"""tool_name tool — One-line description."""
-from __future__ import annotations
-
-from .validators import validate_image_path  # reuse shared validators
-
-def tool_name(image_path: str, ...) -> dict:
-    """Tool docstring.
-
-    Args:
-        image_path: Absolute path to the source image.
-
-    Returns:
-        Dict with result fields.
-    """
-    path = validate_image_path(image_path)
-    # Implementation
-    return {"key": "value"}
-```
-
-**Steps**:
-
-1. Create `tools/{name}.py` with a function returning a `dict`.
-2. Import shared validators from `tools.validators` (`validate_image_path`, `validate_coordinates`).
-3. In `server.py`, import the function and register it with `@mcp.tool()`.
-4. Wrap the call in try/except returning `json.dumps({"error": str(e)})` on failure.
-5. Write a tool description optimized for Claude's tool selection (when to use, not just what it does).
-6. Create `tests/test_{name}.py` with pytest tests.
-7. Add test cases to `tests/live_qa_checklist.md` for MCP-level verification.
-8. Run `make check` (or `bash lint.sh`) to verify all quality gates pass.
-
-## Server Wiring Pattern
-
-Every tool in `server.py` follows this exact structure:
-
-```python
-@mcp_server.tool(
-    name="tool_name",
-    description="When-to-use description for Claude's tool selector.",
-)
-def tool_name(param: str, ...) -> str:
-    """Docstring with Args."""
-    try:
-        result = _tool_impl(param=param, ...)
-        return json.dumps(result)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-    except Exception as e:
-        logging.error("tool=%s unexpected error=%s", tool_name, e, exc_info=True)
-        return json.dumps({"error": f"Internal error in {tool_name}. Check logs."})
-```
-
-Key rules:
-- Tool functions return `str` (JSON-serialized dict). Never raise — always catch and return error JSON.
-- Implementation lives in `tools/`, not in `server.py`. The server only wires and serializes.
-- Tool descriptions describe **when** to use the tool, not just what it does.
-
-## Coordinate System
-
-All tools use normalized 0-1 coordinates: `(0,0)` = top-left, `(1,1)` = bottom-right.
-
-- Validate with `validate_coordinates(x1, y1, x2, y2)` from `tools.validators`.
-- Convert to pixels: `px = int(normalized * dimension)`.
-- Clamp padding to image bounds: `max(0, px - padding)`, `min(dim, px + padding)`.
-
-## Shared Validators
-
-Located in `tools/validators.py` (imported by all tool modules):
-
-| Function | Purpose |
-|-|-|
-| `validate_image_path(path) -> Path` | Check file exists, is a supported image format |
-| `validate_coordinates(x1, y1, x2, y2)` | Check 0-1 range, proper ordering |
-| `cleanup_temp_dir(dir_path, max_mb)` | LRU eviction of oldest files when dir exceeds limit |
-| `SUPPORTED_EXTENSIONS` | Set of valid image suffixes |
-
-## Common Mistakes
-
-- **Don't**: Add scipy or sklearn. **Do**: Use pure numpy (see `_kmeans` in `tools/colors.py`).
-- **Don't**: Print to stdout (breaks stdio transport). **Do**: Use `logging` to stderr.
-- **Don't**: Crash the MCP server on bad input. **Do**: Raise `ValueError` — the server wrapper catches it.
-- **Don't**: Return raw dicts from MCP tool functions. **Do**: Return `json.dumps(result)`.
-- **Don't**: Import validators from `tools/crop.py`. **Do**: Import from `tools/validators.py`.
-
-## On-Demand References
-
-| Domain | Serena Memory |
-|-|-|
-| Full folder map, key files | `crop-mcp/codebase-structure` |
-| Python style, naming | `crop-mcp/code-style-conventions` |
+On crops up to 1200 source pixels per side, the server looks for runs of color detail above the surrounding noise level. It follows a possible tip across a proposed edge using texture or a narrow stroke that contrasts with both flanks. It repeats the measurement with the rectangle expanded and contracted by three source pixels. A gold circle marks a tip found in at least two of the three measurements. `edge_checks_px` gives those source pixel locations. When a side has one such tip, `traced_edges_px` and `traced_edges_normalized` give its half-open edge in both coordinate systems. A background feature can also cross a proposed box. The natural crop lets the caller check which object owns the feature.

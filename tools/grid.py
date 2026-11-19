@@ -1,190 +1,173 @@
-"""Grid overlay rendering for vision-tools MCP server."""
+"""Coordinate rulers for whole screenshots and magnified source regions."""
 
 from __future__ import annotations
 
+import math
 import tempfile
 import uuid
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
+from .edge_detail import Box, Point, detail_view
 from .validators import cleanup_temp_dir
 
-__all__ = ["CYAN", "MAGENTA", "YELLOW", "render_grid"]
-
-# Grid output directory — survives across calls, cleaned by OS or LRU eviction
 _GRID_DIR = Path(tempfile.gettempdir()) / "vision-tools-grids"
-
-# LRU eviction threshold for grid temp directory (megabytes)
 _GRID_DIR_MAX_MB = 50
-
-# Maximum dimension for grid rendering (pixels). Larger images are thumbnailed.
-# 4000x4000 RGBA x 2 copies ≈ 128MB — keeps memory reasonable.
 _GRID_MAX_DIM = 4000
-
-# Index of the .5 gridline in the 1-9 range (gets special yellow color)
-_GRID_MIDPOINT_INDEX = 5
-
-# Desaturation factor: 0.0 = full grayscale, 1.0 = original color.
-# 0.2 keeps just enough color to identify UI elements while reducing
-# visual noise so gridlines remain clearly visible.
-_SATURATION_FACTOR = 0.2
-
-# Sharpening factor: 1.0 = no change, >1.0 = sharper.
-# Crisper edges help distinguish gridline positions against the image.
-_SHARPNESS_FACTOR = 1.5
-
-# Minimum image dimension (px) to add labels on 5% gridlines.
-# Below this, the labels overlap and clutter the image.
-_MINOR_LABEL_MIN_DIM = 800
-
-# Grid colors
+_CROP_VIEW_DIM = 1200
 CYAN = (0, 255, 255)
 MAGENTA = (255, 0, 255)
-YELLOW = (200, 200, 0)  # darker yellow for contrast on black pills
-
-# Font search order: macOS -> Linux common -> Pillow default
-_FONT_PATHS = [
-    "/System/Library/Fonts/Menlo.ttc",
-    "/System/Library/Fonts/SFMono-Regular.otf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-]
+YELLOW = (200, 200, 0)
+_PREVIEW_EDGE = 1400
 
 
-def _get_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Load a monospace font at the given size, with cross-platform fallback."""
-    for font_path in _FONT_PATHS:
-        if Path(font_path).exists():
-            try:
-                return ImageFont.truetype(font_path, size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
-
-
-def _draw_label_pill(
+def _draw_axis(
     draw: ImageDraw.ImageDraw,
-    pos: tuple[int, int],
+    size: tuple[int, int],
+    *,
+    horizontal: bool,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+) -> None:
+    length, depth = size if horizontal else size[::-1]
+    for index in range(1, 20):
+        value = index / 20
+        pos = round(value * length)
+        major = index % 2 == 0
+        color = (YELLOW if math.isclose(value, 0.5) else CYAN) if major else MAGENTA
+        line = (pos, 0, pos, depth - 1) if horizontal else (0, pos, depth - 1, pos)
+        draw.line(
+            line,
+            fill=(*color, 152 if major else 95),
+            width=max(1, round(max(size) / _PREVIEW_EDGE)),
+        )
+        if major:
+            label = f"{value:.8f}".rstrip("0").rstrip(".").lstrip("0")
+            left, top, right, bottom = font.getbbox(label)
+            label_space = (right - left if horizontal else bottom - top) + 6
+            stride = max(1, math.ceil(label_space / (length / 10)))
+            if index // 2 % stride == 0:
+                _label(draw, size, pos, horizontal, label, font, color)
+
+
+def _label(
+    draw: ImageDraw.ImageDraw,
+    size: tuple[int, int],
+    pos: int,
+    horizontal: bool,
     label: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
     color: tuple[int, int, int],
-    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
-    pad: int,
 ) -> None:
-    """Draw a black pill background with colored text at pos (x, y)."""
-    bbox = font.getbbox(label)
-    pw = int(bbox[2] - bbox[0]) + pad * 2
-    ph = int(bbox[3] - bbox[1]) + pad * 2
-    x, y = pos
-    draw.rectangle((x, y, x + pw, y + ph), fill=(0, 0, 0, 200))
-    draw.text((x + pad, y + pad), label, fill=(*color, 255), font=font)
+    left, top, right, bottom = font.getbbox(label)
+    width, height = math.ceil(right - left) + 4, math.ceil(bottom - top) + 4
+    w, h = size
+    if horizontal:
+        x = max(0, min(pos - width // 2, w - width))
+        positions = ((x, 0), (x, h - height))
+    else:
+        y = max(0, min(pos - height // 2, h - height))
+        positions = ((0, y), (w - width, y))
+    for x, y in positions:
+        draw.rectangle((x, y, x + width - 1, y + height - 1), fill=(0, 0, 0, 210))
+        draw.text((x + 2 - left, y + 2 - top), label, font=font, fill=(*color, 255))
 
 
-def _draw_major_gridline(
-    draw: ImageDraw.ImageDraw,
-    i: int,
-    w: int,
-    h: int,
-    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
-    pad: int,
-) -> None:
-    """Draw a single major (10%) gridline with labels on all four edges."""
-    frac = i * 0.1
-    x = int(frac * w)
-    y = int(frac * h)
-
-    is_half = i == _GRID_MIDPOINT_INDEX
-    color = YELLOW if is_half else CYAN
-    line_fill = (*color, 150 if is_half else 120)
-    line_width = 3 if is_half else 2
-
-    label = f".{i}"
-    bbox = font.getbbox(label)
-    pill_w = int(bbox[2] - bbox[0]) + pad * 2
-    pill_h = int(bbox[3] - bbox[1]) + pad * 2
-
-    x_label_x = x - pill_w // 2
-    y_label_y = y - pill_h // 2
-
-    # Gridlines with gaps for labels
-    draw.line([(x, pill_h + 4), (x, h - pill_h - 4)], fill=line_fill, width=line_width)
-    draw.line([(pill_w + 4, y), (w - pill_w - 4, y)], fill=line_fill, width=line_width)
-
-    # Labels on all four edges
-    _draw_label_pill(draw, (x_label_x, 2), label, color, font, pad)
-    _draw_label_pill(draw, (x_label_x, h - pill_h - 2), label, color, font, pad)
-    _draw_label_pill(draw, (2, y_label_y), label, color, font, pad)
-    _draw_label_pill(draw, (w - pill_w - 2, y_label_y), label, color, font, pad)
+def _save_grid(image: Image.Image, source_path: str) -> str:
+    _GRID_DIR.mkdir(parents=True, exist_ok=True)
+    cleanup_temp_dir(_GRID_DIR, _GRID_DIR_MAX_MB)
+    path = _GRID_DIR / f"grid_{Path(source_path).stem}_{uuid.uuid4().hex[:8]}.png"
+    image.save(path)
+    return str(path)
 
 
 def render_grid(img: Image.Image, source_path: str) -> str:
-    """Render a coordinate grid overlay on a copy of the image.
-
-    10% lines in cyan (bold, labeled), 5% lines in subtle magenta.
-    Labels on all four edges for easy reading from any position.
-
-    Args:
-        img: Source image (not modified).
-        source_path: Original file path (used to derive output filename).
-
-    Returns:
-        Path to the grid-annotated image (in a temp directory).
-    """
-    _GRID_DIR.mkdir(parents=True, exist_ok=True)
-    cleanup_temp_dir(_GRID_DIR, _GRID_DIR_MAX_MB)
-
-    # Thumbnail if either dimension exceeds the memory budget
-    if img.size[0] > _GRID_MAX_DIM or img.size[1] > _GRID_MAX_DIM:
-        img = img.copy()
-        img.thumbnail((_GRID_MAX_DIM, _GRID_MAX_DIM), Image.Resampling.LANCZOS)
-
-    w, h = img.size
-    desaturated = ImageEnhance.Color(img.convert("RGB")).enhance(_SATURATION_FACTOR)
-    sharpened = ImageEnhance.Sharpness(desaturated).enhance(_SHARPNESS_FACTOR)
-    overlay_img = sharpened.convert("RGBA")
-    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    """Draw a normalized coordinate grid on a complete screenshot."""
+    view = img.copy()
+    view.thumbnail((_GRID_MAX_DIM, _GRID_MAX_DIM), Image.Resampling.LANCZOS)
+    overlay = Image.new("RGBA", view.size)
     draw = ImageDraw.Draw(overlay)
+    font = ImageFont.load_default(size=max(12, min(33, round(max(view.size) / 80))))
+    _draw_axis(draw, view.size, horizontal=True, font=font)
+    _draw_axis(draw, view.size, horizontal=False, font=font)
+    return _save_grid(Image.alpha_composite(view.convert("RGBA"), overlay), source_path)
 
-    font_size = max(16, int(min(w, h) * 0.05))
-    font = _get_font(font_size)
-    pad = 2
-    minor_line = (*MAGENTA, 180)
 
-    # 5% labels: use a smaller font, only when image is large enough
-    minor_font_size = max(11, int(font_size * 0.6) - 1)
-    minor_font = _get_font(minor_font_size)
-    label_minor = min(w, h) >= _MINOR_LABEL_MIN_DIM
+_RULER_X = 70
+_RULER_Y = 30
 
-    # Compute major label pill height so minor labels sit below/right of them
-    _sample_bbox = font.getbbox(".1")
-    major_pill_h = int(_sample_bbox[3] - _sample_bbox[1]) + pad * 2
-    major_pill_w = int(_sample_bbox[2] - _sample_bbox[0]) + pad * 2
-    minor_top_y = major_pill_h + 6
-    minor_left_x = major_pill_w + 6
 
-    # 5% lines: magenta midpoint references (no alpha fade)
-    for i in range(1, 20):
-        if i % 2 == 0:
-            continue
-        frac = i * 0.05
-        x = int(frac * w)
-        y = int(frac * h)
-        draw.line([(x, 0), (x, h)], fill=minor_line, width=1)
-        draw.line([(0, y), (w, y)], fill=minor_line, width=1)
+def _interval(minimum: float) -> int:
+    unit = int(10 ** max(0, math.floor(math.log10(minimum))))
+    return next(unit * n for n in (1, 2, 5, 10) if unit * n >= minimum)
 
-        if label_minor:
-            label = f".{i * 5:02}"
-            _draw_label_pill(draw, (x + 2, minor_top_y), label, MAGENTA, minor_font, pad)
-            _draw_label_pill(draw, (minor_left_x, y + 2), label, MAGENTA, minor_font, pad)
 
-    # 10% lines: bold, labeled on all edges
-    for i in range(1, 10):
-        _draw_major_gridline(draw, i, w, h, font, pad)
+def _crop_axis(
+    draw: ImageDraw.ImageDraw,
+    view: Image.Image,
+    horizontal: bool,
+    start: int,
+    span: int,
+    original_length: int,
+) -> None:
+    length = view.width if horizontal else view.height
+    scale = length / span
+    major = _interval(66 / scale)
+    minor = _interval(4 / scale)
+    font = ImageFont.load_default(size=14)
+    for edge in range(math.ceil(start / minor) * minor, start + span + 1, minor):
+        offset = round((edge - start) * scale)
+        labeled = edge % major == 0
+        tick = 7 if labeled else 3
+        shade = "#efefef" if labeled else "#a8b5bd"
+        frac = f"{edge / original_length:.5f}".rstrip("0").rstrip(".")
+        if horizontal:
+            x, y = _RULER_X + offset, _RULER_Y + view.height
+            draw.line((x, _RULER_Y - tick, x, _RULER_Y - 1), fill=shade)
+            draw.line((x, y, x, y + tick - 1), fill=shade)
+            if labeled:
+                draw.text((x, _RULER_Y - 10), str(edge), font=font, fill=shade, anchor="ms")
+                draw.text((x, y + 10), frac, font=font, fill=CYAN, anchor="mt")
+        else:
+            x, y = _RULER_X + view.width, _RULER_Y + offset
+            draw.line((_RULER_X - tick, y, _RULER_X - 1, y), fill=shade)
+            draw.line((x, y, x + tick - 1, y), fill=shade)
+            if labeled:
+                draw.text((_RULER_X - 10, y), str(edge), font=font, fill=shade, anchor="rm")
+                draw.text((x + 10, y), frac, font=font, fill=CYAN, anchor="lm")
 
-    result = Image.alpha_composite(overlay_img, overlay)
 
-    stem = Path(source_path).stem
-    grid_path = str(_GRID_DIR / f"grid_{stem}_{uuid.uuid4().hex[:8]}.png")
-    result.save(grid_path, "PNG")
-    return grid_path
+def render_crop_rulers(
+    img: Image.Image,
+    source_path: str,
+    origin: tuple[int, int],
+    source_size: tuple[int, int],
+    *,
+    proposed: Box | None = None,
+    checks: tuple[Point, ...] = (),
+) -> str:
+    """Keep source pixels visible between pixel rulers and normalized rulers."""
+    fit = _CROP_VIEW_DIM / max(img.size)
+    scale = min(8, math.floor(fit)) if fit >= 1 else fit
+    size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    base = img if scale >= 1 else img.resize(size, Image.Resampling.LANCZOS)
+    if proposed is not None:
+        base = detail_view(base)
+    view = base.resize(size, Image.Resampling.NEAREST) if scale > 1 else base
+    canvas = Image.new("RGBA", (view.width + 2 * _RULER_X, view.height + 2 * _RULER_Y), "#192026")
+    draw = ImageDraw.Draw(canvas)
+    _crop_axis(draw, view, True, origin[0], img.width, source_size[0])
+    _crop_axis(draw, view, False, origin[1], img.height, source_size[1])
+    canvas.paste(view, (_RULER_X, _RULER_Y))
+    if proposed is not None:
+        x1, y1, x2, y2 = proposed
+        x = [_RULER_X + round((edge - origin[0]) * view.width / img.width) for edge in (x1, x2)]
+        y = [_RULER_Y + round((edge - origin[1]) * view.height / img.height) for edge in (y1, y2)]
+        # A stroke in the padding leaves even the first and last target pixels visible.
+        draw.rectangle((x[0] - 1, y[0] - 1, x[1], y[1]), outline="#ff408f")
+        for px, py in checks:
+            cx = _RULER_X + (px + 0.5) * view.width / img.width
+            cy = _RULER_Y + (py + 0.5) * view.height / img.height
+            radius = max(4, 2 * scale)
+            draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline="#ffd850")
+    return _save_grid(canvas, source_path)

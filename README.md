@@ -1,140 +1,32 @@
 # Vision Tools MCP
 
-An MCP server that gives Claude Code four image analysis tools for inspecting screenshots, extracting colors, and checking accessibility.
+Measure controls, icons and other elements in screenshots from Codex or another local MCP host. Image coordinates are fractions of the original screenshot's width and height. The top-left corner is `(0, 0)` and the bottom-right is `(1, 1)`.
 
-## Tools
+| Tool | What the model gets |
+|---|---|
+| `get_image_coordinates_grid` | An inline image with coordinate rulers, original dimensions and pixels per percent. For a flat fill, pass `measure_at=[x,y]` inside it to get its exact connected pixel bounds and size. |
+| `crop_to_magnify_image` | An inline zoom, a full-resolution PNG and the exact source bounds after padding. Set `show_grid=true` to see finer rulers in original coordinates. |
+| `extract_colors` | Observed hex and RGB values for the dominant colors in an image or region. Small palettes are counted at full resolution. For richer images, the percentages estimate cluster coverage and each hex is the most frequent sampled shade in its cluster. Transparent images are composited on white, and the result identifies that background. |
+| `check_contrast` | WCAG AA and AAA text verdicts from the unrounded luminance ratio of two sRGB hex colors, plus HSL and OKLCH values. |
 
-| Tool | Purpose |
-|-|-|
-| `get_image_coordinates_grid` | Returns image dimensions and a coordinate-reference grid overlay with labeled gridlines (.1 through .9) for planning crops. |
-| `crop_to_magnify_image` | Crops a region using normalized 0-1 coordinates. Acts as a magnifying glass for reading text or verifying visual details. |
-| `extract_colors` | Extracts dominant colors as exact hex values using k-means clustering. Optionally analyzes a subregion. |
-| `check_contrast` | Computes WCAG 2.1 contrast ratio between two hex colors. Returns AA/AAA pass/fail and HSL/OKLCH conversions. |
+## Measuring a screenshot
 
-## Prerequisites
+1. Use the grid on the original file to locate the target.
+2. For a solid button, select a point on its fill, clear of lettering. The result includes `bounds_px` in left, top, right, bottom order. Right and bottom are exclusive. A border, shadow or gradient can extend beyond the selected fill.
+3. To check a faint edge, pass your proposed box with `show_detail=true` and padding around it. The first image shows the natural crop. The second marks your box in pink and fine color changes in cyan. A gold circle marks a tip that crosses the outline and recurs when the tool moves the outline. Check that the feature belongs to the object. When a side has a single supported tip, read its source coordinate from `traced_edges_px` or its 0–1 coordinate from `traced_edges_normalized`. Both views have source pixel rulers on the top and left and normalized rulers on the bottom and right. Use `show_grid=true` for the natural image alone and `padding=0` to reproduce an exact box.
 
-- Python 3.14+
-- macOS, Linux, or WSL
+## Connect to Codex
 
-### Runtime dependencies
+Register this checkout once. With `uvx` available, the same registration works on macOS and Windows. Substitute the absolute path to this checkout, quoting it if it contains spaces.
 
-| Package | Version |
-|-|-|
-| mcp[cli] | >=1.27, <3 |
-| Pillow | >=12.2, <13 |
-| numpy | >=2.4, <2.5 |
-
-## Setup
-
-```bash
-bash setup.sh
+```sh
+codex mcp add vision-tools -- uvx --python 3.14 --from "/absolute/path/to/crop_mcp" vision-tools-mcp
 ```
 
-This creates a virtualenv at `~/.vision-tools-env/` and installs all dependencies (runtime and dev).
-
-### Register with Claude Code
-
-```bash
-claude mcp add --transport stdio --scope user vision-tools \
-  -- ~/.vision-tools-env/bin/python3 /absolute/path/to/server.py
-```
-
-### Awareness Rule
-
-For Claude to proactively use these tools (not just when explicitly asked), copy the awareness rule:
-
-```bash
-cp .claude/rules/vision-tools-awareness.md ~/.claude/rules/
-```
+The host starts the server and receives images over stdio. Existing registrations pointing to an installed Python interpreter and `server.py` also work. For Claude Code, use `claude mcp add --transport stdio --scope user vision-tools --` with the same `uvx` arguments.
 
 ## Development
 
-All commands assume setup has been run (`bash setup.sh`).
+The project targets Python 3.14+. Run `make setup` on macOS or Linux, or `py -3.14 server.py --setup --dev` on Windows, to install the locked development dependencies. On Unix, `make smoke-test` exercises the image pipeline and `make check` runs the quality checks. Set `LOG_LEVEL` to control stderr logging.
 
-| Command | Purpose |
-|-|-|
-| `make check` | Run full quality pipeline (lint + format + typecheck + test + file length) |
-| `make test` | Run pytest suite only |
-| `make lint` | Run ruff check only |
-| `make format` | Auto-format all Python files |
-| `make typecheck` | Run mypy in strict mode |
-| `make smoke-test` | Quick integration tests |
-| `make live-qa` | Generate images for live MCP QA (see `tests/live_qa_checklist.md`) |
-| `make clean` | Remove caches and build artifacts |
-
-### Environment variables
-
-| Variable | Default | Purpose |
-|-|-|-|
-| `LOG_LEVEL` | `INFO` | Server log verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-
-Or use the underlying tools directly:
-
-```bash
-~/.vision-tools-env/bin/pytest -v
-~/.vision-tools-env/bin/ruff check .
-~/.vision-tools-env/bin/mypy .
-bash lint.sh                    # all of the above in sequence
-```
-
-## Architecture
-
-```
-server.py             MCP server entry point — tool registration and wiring
-bootstrap.py          Venv detection, dependency checking, auto-setup
-tools/
-  validators.py       Shared validators: validate_image_path, validate_coordinates, cleanup_temp_dir
-  crop.py             crop_image and image_info implementations
-  grid.py             Coordinate grid overlay rendering
-  colors.py           extract_colors with numpy k-means clustering
-  contrast.py         WCAG contrast ratio, HSL/OKLCH conversion (stdlib only)
-tests/
-  conftest.py         Shared fixtures: synthetic_image, solid_color_image
-  test_validators.py  Tests for path and coordinate validation
-  test_crop.py        Tests for crop_image and image_info
-  test_grid.py        Pixel-level grid rendering tests
-  test_colors.py      Tests for _kmeans and extract_colors
-  test_cleanup.py     Tests for LRU temp directory eviction
-  test_validate_region.py  Tests for optional region coordinate validation
-  test_server.py      Server wrapper contract tests (JSON serialization, error handling)
-  test_integration.py End-to-end pipeline tests (info → crop → colors)
-  generate_live_images.py  Generates deterministic images for live QA
-  live_qa_checklist.md     Step-by-step MCP QA procedure (13 test cases)
-  live_qa_images/          Generated images (gitignored)
-```
-
-### Dependency Flow
-
-```
-bootstrap.py (stdlib only — no project dependencies)
-server.py → bootstrap.py
-          → tools/crop.py     → tools/grid.py → tools/validators.py
-          → tools/colors.py   ─────────────→ tools/validators.py
-          → tools/contrast.py (stdlib only — no tools/ dependencies)
-```
-
-No circular dependencies. All tools depend on `validators.py` for shared validation. Grid rendering is isolated from crop logic.
-
-### Coordinate System
-
-All tools use normalized 0-1 coordinates: `(0, 0)` = top-left, `(1, 1)` = bottom-right. Conversion to pixels: `px = int(normalized * dimension)`. Padding is clamped to image bounds.
-
-### Adding a New Tool
-
-1. Create `tools/{name}.py` with a function returning a `dict`.
-2. Import shared validators from `tools.validators`.
-3. In `server.py`, register with `@mcp.tool()` — wrap in try/except, return `json.dumps(result)`.
-4. Add tests in `tests/test_{name}.py`.
-5. Run `make check` to verify.
-
-See `docs/architecture.md` for the full pattern template.
-
-## Quality Standards
-
-- **Linter**: ruff with 20+ rule groups (pyflakes, bugbear, complexity, naming, etc.)
-- **Formatter**: ruff format (double quotes, 100 char line length)
-- **Type checker**: mypy in strict mode
-- **Tests**: pytest with synthetic image fixtures — no real screenshots in automated tests
-- **Complexity**: Max cyclomatic complexity 10, max 40 statements per function
-- **File length**: Max 750 lines per Python file
-- **CI**: GitHub Actions runs lint + format + typecheck + test on push and PR
+The testing guide includes the stdio contract checks and the blind screenshot evaluation. [Testing guide](docs/testing.md)

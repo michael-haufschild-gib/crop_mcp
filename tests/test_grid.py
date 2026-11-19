@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
-from unittest.mock import patch
 
 from PIL import Image
 
-from tools.grid import CYAN, YELLOW, render_grid
+from tools.grid import CYAN, YELLOW, render_crop_rulers, render_grid
 
 
 def _color_distance(c1: tuple[int, ...], c2: tuple[int, int, int]) -> float:
@@ -86,16 +85,20 @@ class TestGridRendering:
             f"Minor gridline pixel {pixel} shows no magenta shift vs background {bg_pixel}"
         )
 
-    def test_font_fallback_does_not_crash(
-        self,
-        solid_color_image: Callable[[tuple[int, int, int], tuple[int, int]], Path],
-    ) -> None:
-        """When no system fonts exist, _get_font falls back to default."""
-        path = solid_color_image((128, 128, 128), (200, 200))
-        img = Image.open(path)
-        with patch("tools.grid._FONT_PATHS", ["/nonexistent/font.ttf"]):
-            grid_path = render_grid(img, str(path))
-            assert Path(grid_path).exists()
+    def test_zoom_grid_tracks_source_offset(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (120, 60), (80, 80, 80))
+        # Put one bright source pixel at absolute (500, 250).
+        img.putpixel((500 - 473, 250 - 241), (22, 177, 93))
+        path = render_crop_rulers(img, str(tmp_path / "frame.png"), (473, 241), (1000, 500))
+        with Image.open(path) as grid:
+            left, top = (grid.width - 120 * 8) // 2, (grid.height - 60 * 8) // 2
+            x, y = left + (500 - 473) * 8, top + (250 - 241) * 8
+            assert _pixel_tuple(grid, (x, top - 6))[:3] == (239, 239, 239)
+            assert _pixel_tuple(grid, (left - 6, y))[:3] == (239, 239, 239)
+            assert _pixel_tuple(grid, (x + 1, top - 6))[:3] != (239, 239, 239)
+            center = grid.crop((left, top, grid.width - left, grid.height - top))
+            expected = img.resize(center.size, Image.Resampling.NEAREST)
+            assert center.convert("RGB").tobytes() == expected.tobytes()
 
     def test_deterministic_output(
         self,

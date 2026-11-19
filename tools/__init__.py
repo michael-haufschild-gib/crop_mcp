@@ -1,4 +1,4 @@
-"""Vision tools package — image analysis tools for Claude Code MCP server."""
+"""Image analysis tools for the Vision Tools MCP server."""
 
 from __future__ import annotations
 

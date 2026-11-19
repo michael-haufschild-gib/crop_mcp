@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import math
-import tempfile
-import uuid
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .edge_detail import Box, Point, detail_view
-from .validators import cleanup_temp_dir
+from .runtime import save_png
 
-_GRID_DIR = Path(tempfile.gettempdir()) / "vision-tools-grids"
-_GRID_DIR_MAX_MB = 50
+if TYPE_CHECKING:
+    from .edge_detail import Box, Point
+
 _GRID_MAX_DIM = 4000
 _CROP_VIEW_DIM = 1200
 CYAN = (0, 255, 255)
@@ -73,24 +71,22 @@ def _label(
         draw.text((x + 2 - left, y + 2 - top), label, font=font, fill=(*color, 255))
 
 
-def _save_grid(image: Image.Image, source_path: str) -> str:
-    _GRID_DIR.mkdir(parents=True, exist_ok=True)
-    cleanup_temp_dir(_GRID_DIR, _GRID_DIR_MAX_MB)
-    path = _GRID_DIR / f"grid_{Path(source_path).stem}_{uuid.uuid4().hex[:8]}.png"
-    image.save(path)
-    return str(path)
-
-
 def render_grid(img: Image.Image, source_path: str) -> str:
     """Draw a normalized coordinate grid on a complete screenshot."""
-    view = img.copy()
-    view.thumbnail((_GRID_MAX_DIM, _GRID_MAX_DIM), Image.Resampling.LANCZOS)
+    del source_path  # Retained for callers of the original rendering API.
+    view = img
+    if max(img.size) > _GRID_MAX_DIM:
+        scale = _GRID_MAX_DIM / max(img.size)
+        size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+        view = img.resize(size, Image.Resampling.LANCZOS, reducing_gap=2)
+
     overlay = Image.new("RGBA", view.size)
     draw = ImageDraw.Draw(overlay)
     font = ImageFont.load_default(size=max(12, min(33, round(max(view.size) / 80))))
     _draw_axis(draw, view.size, horizontal=True, font=font)
     _draw_axis(draw, view.size, horizontal=False, font=font)
-    return _save_grid(Image.alpha_composite(view.convert("RGBA"), overlay), source_path)
+    base = view if view.mode == "RGBA" else view.convert("RGBA")
+    return str(save_png(Image.alpha_composite(base, overlay), "grid"))
 
 
 _RULER_X = 70
@@ -147,11 +143,14 @@ def render_crop_rulers(
     checks: tuple[Point, ...] = (),
 ) -> str:
     """Keep source pixels visible between pixel rulers and normalized rulers."""
+    del source_path
     fit = _CROP_VIEW_DIM / max(img.size)
     scale = min(8, math.floor(fit)) if fit >= 1 else fit
     size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
     base = img if scale >= 1 else img.resize(size, Image.Resampling.LANCZOS)
     if proposed is not None:
+        from .edge_detail import detail_view
+
         base = detail_view(base)
     view = base.resize(size, Image.Resampling.NEAREST) if scale > 1 else base
     canvas = Image.new("RGBA", (view.width + 2 * _RULER_X, view.height + 2 * _RULER_Y), "#192026")
@@ -170,4 +169,4 @@ def render_crop_rulers(
             cy = _RULER_Y + (py + 0.5) * view.height / img.height
             radius = max(4, 2 * scale)
             draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline="#ffd850")
-    return _save_grid(canvas, source_path)
+    return str(save_png(canvas, "detail" if proposed is not None else "grid"))

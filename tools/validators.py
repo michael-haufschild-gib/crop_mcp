@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-import contextlib
 import math
+from contextlib import contextmanager
+from itertools import islice
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageOps
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 __all__ = [
     "SUPPORTED_EXTENSIONS",
-    "cleanup_temp_dir",
+    "open_image",
     "pixel_edge",
     "read_image",
     "validate_coordinates",
@@ -28,13 +33,33 @@ def pixel_edge(fraction: float, dimension: int) -> int:
     return nearest if abs(scaled - nearest) <= math.ulp(scaled) else int(scaled)
 
 
-def read_image(path: Path) -> Image.Image:
-    """Use the same visual orientation as image viewers, across all screenshot tools."""
+_MAX_PIXELS = 24_000_000
+
+
+@contextmanager
+def open_image(path: Path) -> Iterator[Image.Image]:
+    """Check the pixel budget before decoding. The caller owns the image inside the context."""
     try:
-        with Image.open(path) as opened:
-            return ImageOps.exif_transpose(opened)
+        opened = Image.open(path)
+        try:
+            if opened.width * opened.height > _MAX_PIXELS:
+                raise ValueError(f"Image exceeds the {_MAX_PIXELS:,}-pixel limit. Resize it first.")
+            ImageOps.exif_transpose(opened, in_place=True)
+        except BaseException:
+            opened.close()
+            raise
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
         raise ValueError(f"Could not open image: {path}\nError: {exc}") from exc
+    try:
+        yield opened
+    finally:
+        opened.close()
+
+
+def read_image(path: Path) -> Image.Image:
+    """Return an independent, display-oriented image for callers that retain it."""
+    with open_image(path) as source:
+        return source.copy()
 
 
 def validate_image_path(image_path: str) -> Path:
@@ -60,9 +85,10 @@ def validate_image_path(image_path: str) -> Path:
                 f"The directory '{parent}' does not exist either.\n"
                 f"Hint: Use an absolute path like /Users/you/screenshots/image.png"
             )
-        similar = [f.name for f in parent.iterdir() if f.suffix.lower() in SUPPORTED_EXTENSIONS]
+        names = (f.name for f in parent.iterdir() if f.suffix.lower() in SUPPORTED_EXTENSIONS)
+        similar = list(islice(names, 5))
         if similar:
-            suggestions = ", ".join(similar[:5])
+            suggestions = ", ".join(similar)
             raise ValueError(
                 f"Image not found: {image_path}\nImages in that directory: {suggestions}"
             )
@@ -130,33 +156,3 @@ def validate_coordinates(x1: float, y1: float, x2: float, y2: float) -> None:
             f"y1 is the TOP edge, y2 is the BOTTOM edge.\n"
             f"Hint: Did you swap them? Try y1={min(y1, y2)}, y2={max(y1, y2)}"
         )
-
-
-def cleanup_temp_dir(dir_path: Path, max_mb: float = 50) -> None:
-    """Evict oldest files if directory exceeds max_mb. Simple LRU by mtime.
-
-    Args:
-        dir_path: Directory to clean up.
-        max_mb: Maximum size in megabytes before eviction starts.
-    """
-    if not dir_path.exists():
-        return
-    # Single stat() per file: cache both mtime and size
-    entries: list[tuple[Path, float, int]] = []  # (path, mtime, size)
-    for f in dir_path.iterdir():
-        if f.is_file():
-            st = f.stat()
-            entries.append((f, st.st_mtime, st.st_size))
-    entries.sort(key=lambda e: e[1])  # sort by mtime, oldest first
-    total = sum(size for _, _, size in entries)
-    limit = int(max_mb * 1024 * 1024)
-    if total <= limit:
-        return
-    # Evict down to half the limit to avoid re-triggering on the next call
-    target = limit // 2
-    for victim, _, size in entries:
-        if total <= target:
-            break
-        total -= size
-        with contextlib.suppress(OSError):
-            victim.unlink(missing_ok=True)

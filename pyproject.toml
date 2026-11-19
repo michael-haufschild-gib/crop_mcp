@@ -1,8 +1,8 @@
 [project]
 name = "vision-tools-mcp"
 version = "0.1.0"
-requires-python = ">=3.14"
-dependencies = ["pymcp-kit>=0.3,<0.4", "pydantic>=2.14.3,<3", "Pillow>=13.0,<14", "numpy>=2.5.5,<2.6"]
+requires-python = ">=3.12"
+dependencies = ["pymcp-kit>=0.3,<0.4", "pydantic>=2.14.3,<3", "Pillow>=13.0,<14", "numpy>=2.5.5,<2.6", "packaging"]
 
 [project.scripts]
 vision-tools-mcp = "server:main"
@@ -16,11 +16,12 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["tools"]
-py-modules = ["bootstrap", "server"]
+py-modules = ["bootstrap", "file_lock", "server", "stdio_host"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py312"
+extend-exclude = [".vision-tools-env"]
 
 [tool.ruff.lint]
 select = [

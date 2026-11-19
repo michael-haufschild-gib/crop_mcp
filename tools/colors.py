@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-import numpy as np
 from PIL import Image
 
-from .validators import pixel_edge, read_image, validate_coordinates, validate_image_path
+from .runtime import check_active, image_request
+from .validators import open_image, pixel_edge, validate_coordinates, validate_image_path
+
+if TYPE_CHECKING:
+    import numpy as np
 
 __all__ = ["extract_colors"]
 
@@ -35,6 +38,29 @@ class ExtractColorsResult(TypedDict):
     region_px: NotRequired[list[int]]
 
 
+def _distance(pixels: np.ndarray, center: np.ndarray) -> np.ndarray:
+    import numpy as np
+
+    delta = pixels - center
+    squared = np.empty(len(delta), dtype=delta.dtype)
+    np.einsum("ij,ij->i", delta, delta, out=squared)
+    return squared
+
+
+def _assign(pixels: np.ndarray, centers: np.ndarray) -> np.ndarray:
+    """Track only the nearest center per pixel, preserving first-center tie breaks."""
+    import numpy as np
+
+    nearest = _distance(pixels, centers[0])
+    labels = np.zeros(len(pixels), dtype=np.intp)
+    for index, center in enumerate(centers[1:], start=1):
+        distances = _distance(pixels, center)
+        closer = distances < nearest
+        labels[closer] = index
+        np.minimum(nearest, distances, out=nearest)
+    return labels
+
+
 def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray, np.ndarray]:
     """Simple k-means clustering for RGB pixels. No scipy/sklearn needed.
 
@@ -46,12 +72,10 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
     Returns:
         (centers, labels) — cluster centers (k, 3) and per-pixel labels (N,).
 
-    Performance:
-        Memory is O(N * k * 3) float64 for the distance matrix each iteration
-        plus O(N * 3) float64 for the pre-converted pixel array.
-        At MAX_ANALYSIS_DIM=200 (40K pixels) and MAX_COLORS=20: ~18 MB per iteration.
-        Callers must thumbnail images to MAX_ANALYSIS_DIM before calling this function.
+    Working memory scales with the number of sampled pixels.
     """
+    import numpy as np
+
     n = pixels.shape[0]
 
     # Convert once — avoid repeated astype(float64) in hot loops
@@ -74,12 +98,9 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
     centers = np.empty((k, 3), dtype=np.float64)
     centers[0] = pixels_f[int(rng.integers(n))]
 
+    dists = np.full(n, np.inf)
     for i in range(1, k):
-        # Distance from each point to nearest existing center
-        dists = np.min(
-            np.sum((pixels_f[:, None, :] - centers[None, :i, :]) ** 2, axis=2),
-            axis=1,
-        )
+        np.minimum(dists, _distance(pixels_f, centers[i - 1]), out=dists)
         # Probability proportional to distance squared
         total_dist = dists.sum()
         if total_dist == 0:
@@ -91,9 +112,9 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
 
     # Iterate
     for _ in range(max_iter):
+        check_active()
         # Assign each pixel to nearest center
-        dists = np.sum((pixels_f[:, None, :] - centers[None, :, :]) ** 2, axis=2)
-        labels = np.argmin(dists, axis=1)
+        labels = _assign(pixels_f, centers)
 
         # Update centers
         new_centers = np.empty_like(centers)
@@ -112,10 +133,7 @@ def _kmeans(pixels: np.ndarray, k: int, max_iter: int = 30) -> tuple[np.ndarray,
         centers = new_centers
 
     # Recompute labels against final centers so they're consistent
-    dists = np.sum((pixels_f[:, None, :] - centers[None, :, :]) ** 2, axis=2)
-    labels = np.argmin(dists, axis=1)
-
-    return centers, labels
+    return centers, _assign(pixels_f, centers)
 
 
 def _validate_region(
@@ -172,6 +190,8 @@ def _cluster_colors(
     labels: np.ndarray,
 ) -> list[ColorEntry]:
     """Report the most frequent original shade in each cluster and its coverage."""
+    import numpy as np
+
     total = len(labels)
     results: list[ColorEntry] = []
     for i in np.unique(labels):
@@ -204,12 +224,15 @@ def _dominant_colors(img: Image.Image, n_colors: int) -> list[ColorEntry]:
             for count, rgb in sorted(exact, reverse=True)
             if isinstance(rgb, tuple)
         ]
+    import numpy as np
+
     img.thumbnail((MAX_ANALYSIS_DIM, MAX_ANALYSIS_DIM), Image.Resampling.NEAREST)
     pixels = np.array(img).reshape(-1, 3)
     _, labels = _kmeans(pixels, n_colors)
     return _cluster_colors(pixels, labels)
 
 
+@image_request()
 def extract_colors(
     image_path: str,
     n_colors: int = 6,
@@ -243,28 +266,16 @@ def extract_colors(
 
     region = _validate_region(x1, y1, x2, y2)
 
-    img = read_image(path)
-
-    full_size = img.size
-
-    if region is not None:
-        img, region_str = _crop_to_region(img, *region)
-    else:
-        region_str = "full image"
-
-    if img.size[0] < 1 or img.size[1] < 1:
-        raise ValueError(
-            f"Region is too small ({img.size[0]}x{img.size[1]} pixels).\n"
-            f"Try a larger region or the full image."
-        )
-
-    transparent = img.has_transparency_data
-    if transparent:
-        img = Image.alpha_composite(Image.new("RGBA", img.size, "white"), img.convert("RGBA"))
-    img = img.convert("RGB")
+    with open_image(path) as source:
+        full_size = source.size
+        if region is None:
+            img, region_str = source, "full image"
+        else:
+            img, region_str = _crop_to_region(source, *region)
+        colors, transparent = _analyze(img, n_colors)
 
     result: ExtractColorsResult = {
-        "colors": _dominant_colors(img, n_colors),
+        "colors": colors,
         "image_size": list(full_size),
         "region_analyzed": region_str,
     }
@@ -275,3 +286,18 @@ def extract_colors(
             pixel_edge(v, dim) for v, dim in zip(region, full_size * 2, strict=True)
         ]
     return result
+
+
+def _analyze(img: Image.Image, n_colors: int) -> tuple[list[ColorEntry], bool]:
+    if min(img.size) < 1:
+        raise ValueError(
+            f"Region is too small ({img.width}x{img.height} pixels). Try a larger region."
+        )
+    transparent = img.has_transparency_data
+    if transparent:
+        rgba = img if img.mode == "RGBA" else img.convert("RGBA")
+        img = Image.new("RGB", img.size, "white")
+        img.paste(rgba, mask=rgba.getchannel("A"))
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    return _dominant_colors(img, n_colors), transparent

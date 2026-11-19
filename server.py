@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Vision Tools MCP. The host owns the stdio process."""
 
+from __future__ import annotations
+
 import base64
 import inspect
 import io
@@ -8,10 +10,11 @@ import json
 import logging
 import os
 import sys
+from contextlib import nullcontext
 from functools import wraps
 from typing import TYPE_CHECKING, Any, get_args, get_type_hints
 
-from bootstrap import ensure_dependencies, setup_environment
+from bootstrap import configure_host, ensure_dependencies, ensure_python
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -57,21 +60,26 @@ def _previews(paths: list[str], *, magnify: bool) -> list[dict[str, str]]:
 def _tool_result(
     fn: Callable[..., Mapping[str, Any]], image_key: str | None = None
 ) -> Callable[..., dict[str, Any]]:
+    from tools.runtime import image_request
+
+    uses_image = "image_path" in inspect.signature(fn).parameters
+
     @wraps(fn)
     def call(**kwargs: Any) -> dict[str, Any]:
         try:
-            result = fn(**kwargs)
-            content = [{"type": "text", "text": json.dumps(result)}]
-            if image_key:
-                paths = [result.get("grid_image") or result[image_key]]
-                if "detail_image" in result:
-                    paths.append(result["detail_image"])
-                content.extend(
-                    _previews(
-                        paths, magnify=image_key == "output_path" and "grid_image" not in result
+            with image_request() if uses_image else nullcontext():
+                result = fn(**kwargs)
+                content = [{"type": "text", "text": json.dumps(result)}]
+                if image_key:
+                    paths = [result.get("grid_image") or result[image_key]]
+                    if "detail_image" in result:
+                        paths.append(result["detail_image"])
+                    content.extend(
+                        _previews(
+                            paths, magnify=image_key == "output_path" and "grid_image" not in result
+                        )
                     )
-                )
-            return {"content": content}
+                return {"content": content}
         except ValueError as exc:
             message = str(exc)
         except Exception:
@@ -112,8 +120,9 @@ def _input_schema(fn: Callable[..., object]) -> dict[str, Any]:
 
 
 def _start_server() -> None:
-    from pymcp import CapabilitySettings, ServerSettings, create_app, run_stdio_server
+    from pymcp import CapabilitySettings, ServerSettings, create_app
 
+    from stdio_host import serve
     from tools.colors import extract_colors
     from tools.contrast import check_contrast
     from tools.crop import crop_image, image_info
@@ -132,7 +141,8 @@ def _start_server() -> None:
     ) -> None:
         registry.register(_tool_result(fn, image_key), name=name, description=desc)
         definition = registry.get(name)
-        assert definition is not None
+        if definition is None:
+            raise RuntimeError(f"MCP registry did not retain tool {name!r}.")
         # The toolkit's inferred schemas omit defaults and union types. Publish the
         # complete Python call signature, including numeric bounds' optional inputs.
         definition.input_schema = _input_schema(fn)
@@ -179,13 +189,24 @@ def _start_server() -> None:
     for stream in (sys.stdin, sys.stdout):
         if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(encoding="utf-8")
-    run_stdio_server(app)
+    from tools.runtime import runtime
+
+    try:
+        runtime.reap()
+    except (OSError, ValueError) as exc:
+        _log.warning("Could not reclaim previous image sessions: %s", exc)
+    try:
+        serve(app)
+    finally:
+        runtime.close()
 
 
 def main() -> None:
+    """Prepare the requested environment or serve MCP on standard I/O."""
+    ensure_python()
     logging.basicConfig(stream=sys.stderr, level=os.environ.get("LOG_LEVEL", "INFO").upper())
     if "--setup" in sys.argv:
-        setup_environment(dev="--dev" in sys.argv)
+        configure_host(dev="--dev" in sys.argv)
         return
     ensure_dependencies()
     _start_server()

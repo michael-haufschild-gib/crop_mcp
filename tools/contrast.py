@@ -54,6 +54,11 @@ def _parse_hex(hex_str: str) -> tuple[int, int, int]:
     Raises:
         ValueError: If the string is not a valid 6-digit hex color.
     """
+    if not isinstance(hex_str, str):
+        raise ValueError(
+            f"Invalid hex color: expected a string, got {type(hex_str).__name__}.\n"
+            f"Expected format: '#RRGGBB' or 'RRGGBB' (6 hex digits)."
+        )
     m = _HEX_RE.match(hex_str.strip())
     if not m:
         raise ValueError(
@@ -115,11 +120,11 @@ def _contrast_ratio(lum1: float, lum2: float) -> float:
         lum2: Relative luminance of second color.
 
     Returns:
-        Contrast ratio (1.0 to 21.0), rounded to 2 decimal places.
+        Contrast ratio (1.0 to 21.0), at full precision.
     """
     lighter = max(lum1, lum2)
     darker = min(lum1, lum2)
-    return round((lighter + 0.05) / (darker + 0.05), 2)
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 # --- HSL conversion ---
@@ -274,6 +279,9 @@ def check_contrast(
         Dict with foreground/background color info, contrast_ratio,
         wcag_aa, wcag_aaa booleans, and a verdict string.
     """
+    if not isinstance(text_is_large, bool):
+        raise ValueError(f"text_is_large must be a boolean, got {type(text_is_large).__name__}.")
+
     fg_r, fg_g, fg_b = _parse_hex(foreground)
     bg_r, bg_g, bg_b = _parse_hex(background)
 
@@ -288,6 +296,9 @@ def check_contrast(
     passes_aa = ratio >= aa_threshold
     passes_aaa = ratio >= aaa_threshold
 
+    # Preserve enough precision to explain a verdict near the threshold.
+    if round(ratio, 2) not in (aa_threshold, aaa_threshold):
+        ratio = round(ratio, 2)
     if passes_aaa:
         verdict = f"PASS AA+AAA — {ratio}:1 ({size_label} text)"
     elif passes_aa:

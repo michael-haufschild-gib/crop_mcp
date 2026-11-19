@@ -3,17 +3,38 @@
 from __future__ import annotations
 
 import contextlib
+import math
 from pathlib import Path
+
+from PIL import Image, ImageOps
 
 __all__ = [
     "SUPPORTED_EXTENSIONS",
     "cleanup_temp_dir",
+    "pixel_edge",
+    "read_image",
     "validate_coordinates",
     "validate_image_path",
 ]
 
 # Supported image extensions (lowercase)
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+
+
+def pixel_edge(fraction: float, dimension: int) -> int:
+    """Floor a normalized edge, preserving integer edges on a float round trip."""
+    scaled = fraction * dimension
+    nearest = round(scaled)
+    return nearest if abs(scaled - nearest) <= math.ulp(scaled) else int(scaled)
+
+
+def read_image(path: Path) -> Image.Image:
+    """Use the same visual orientation as image viewers, across all screenshot tools."""
+    try:
+        with Image.open(path) as opened:
+            return ImageOps.exif_transpose(opened)
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise ValueError(f"Could not open image: {path}\nError: {exc}") from exc
 
 
 def validate_image_path(image_path: str) -> Path:
@@ -77,9 +98,14 @@ def validate_coordinates(x1: float, y1: float, x2: float, y2: float) -> None:
     coords = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
 
     for name, val in coords.items():
-        if not isinstance(val, (int, float)):
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
             raise ValueError(
-                f"'{name}' must be a number, got {type(val).__name__}.\n"
+                f"'{name}' must be a finite number, got {type(val).__name__}.\n"
+                f"Coordinates use a 0-1 scale: 0.0 = left/top edge, 1.0 = right/bottom edge."
+            )
+        if not math.isfinite(float(val)):
+            raise ValueError(
+                f"'{name}' must be finite, got {val}.\n"
                 f"Coordinates use a 0-1 scale: 0.0 = left/top edge, 1.0 = right/bottom edge."
             )
         if val < 0.0 or val > 1.0:

@@ -51,6 +51,10 @@ class TestParseHex:
         with pytest.raises(ValueError, match="Invalid hex color"):
             _parse_hex("")
 
+    def test_non_string_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="expected a string"):
+            _parse_hex(123)  # type: ignore[arg-type]
+
     def test_just_hash_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid hex color"):
             _parse_hex("#")
@@ -171,6 +175,16 @@ class TestRgbToOklch:
 class TestCheckContrast:
     """Full check_contrast integration."""
 
+    def test_below_threshold_fails_even_when_display_rounds_up(self) -> None:
+        for color, background, large, grade, threshold in (
+            ("#595959", "#000000", True, "wcag_aa", 3),
+            ("#777777", "#070707", False, "wcag_aa", 4.5),
+            ("#AEAEAE", "#242424", False, "wcag_aaa", 7),
+        ):
+            result = check_contrast(color, background, text_is_large=large)
+            assert result["contrast_ratio"] < threshold == round(result["contrast_ratio"], 2)
+            assert (result["wcag_aaa"] if grade == "wcag_aaa" else result["wcag_aa"]) is False
+
     def test_black_on_white(self) -> None:
         result = check_contrast("#FFFFFF", "#000000")
         assert result["contrast_ratio"] == 21.0
@@ -207,9 +221,9 @@ class TestCheckContrast:
 
     def test_large_text_relaxed_thresholds(self) -> None:
         # A ratio between 3.0 and 4.5 should fail AA normal but pass AA large
-        # #959595 on white ≈ 3.18:1
-        result_normal = check_contrast("#959595", "#FFFFFF", text_is_large=False)
-        result_large = check_contrast("#959595", "#FFFFFF", text_is_large=True)
+        # #949494 on white is 3.033:1.
+        result_normal = check_contrast("#949494", "#FFFFFF", text_is_large=False)
+        result_large = check_contrast("#949494", "#FFFFFF", text_is_large=True)
         assert result_normal["wcag_aa"] is False
         assert result_large["wcag_aa"] is True
 
@@ -253,3 +267,7 @@ class TestCheckContrast:
     def test_without_hash_accepted(self) -> None:
         result = check_contrast("FFFFFF", "000000")
         assert result["contrast_ratio"] == 21.0
+
+    def test_text_is_large_must_be_boolean(self) -> None:
+        with pytest.raises(ValueError, match="must be a boolean"):
+            check_contrast("#FFFFFF", "#000000", text_is_large="yes")  # type: ignore[arg-type]

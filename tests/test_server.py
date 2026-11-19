@@ -1,316 +1,188 @@
-"""Tests for server.py MCP tool wrappers and MCP wiring.
-
-These tests verify:
-1. Tool functions return dicts that serialize to valid JSON.
-2. JSON contains all expected fields.
-3. Error inputs produce ValueError (caught by server wrapper as error JSON).
-4. MCP tool registration wires all four tools with correct names.
-5. MCP tool invocation returns valid JSON strings through the server layer.
-6. Unexpected exceptions are sanitized before reaching MCP clients.
-7. main() entry point handles --setup flag and normal startup.
-"""
-
-from __future__ import annotations
+"""Exercise the protocol exactly as a stdio host sees it."""
 
 import asyncio
+import base64
+import io
 import json
+import os
+import sys
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any, cast
 
-import pytest
-from mcp.server.fastmcp import FastMCP
+from PIL import Image
 
-from server import _register_color_tools, _register_image_tools, _run_tool, main
-
-
-class TestImageInfoWrapper:
-    """Tests for the image_info → get_image_coordinates_grid wrapper."""
-
-    def test_returns_serializable_dict(self, synthetic_image: Path) -> None:
-        from tools.crop import image_info
-
-        result = image_info(str(synthetic_image))
-        serialized = json.dumps(result)
-        parsed = json.loads(serialized)
-        assert parsed["width"] == 200
-        assert parsed["height"] == 100
-        assert "grid_image" in parsed
-
-    def test_all_expected_fields_present(self, synthetic_image: Path) -> None:
-        from tools.crop import image_info
-
-        result = image_info(str(synthetic_image))
-        expected_keys = {
-            "width",
-            "height",
-            "aspect_ratio",
-            "file_size_kb",
-            "mode",
-            "pixels_per_percent",
-            "longer_axis",
-            "grid_image",
-        }
-        assert set(result.keys()) == expected_keys
-
-    def test_invalid_path_raises_value_error(self) -> None:
-        from tools.crop import image_info
-
-        with pytest.raises(ValueError, match="not found"):
-            image_info("/nonexistent/image.png")
+from server import _tool_result
 
 
-class TestCropImageWrapper:
-    """Tests for the crop_image → crop_to_magnify_image wrapper."""
-
-    def test_returns_serializable_dict(self, synthetic_image: Path) -> None:
-        from tools.crop import crop_image
-
-        result = crop_image(str(synthetic_image), 0.0, 0.0, 0.5, 1.0, padding=0)
-        serialized = json.dumps(result)
-        parsed = json.loads(serialized)
-        assert "output_path" in parsed
-        assert parsed["width"] == 100
-
-    def test_invalid_path_raises_value_error(self) -> None:
-        from tools.crop import crop_image
-
-        with pytest.raises(ValueError, match="not found"):
-            crop_image("/nonexistent/image.png", 0.0, 0.0, 1.0, 1.0)
-
-    def test_invalid_coords_raises_value_error(self, synthetic_image: Path) -> None:
-        from tools.crop import crop_image
-
-        with pytest.raises(ValueError, match="must be less than"):
-            crop_image(str(synthetic_image), 0.8, 0.0, 0.2, 1.0)
+async def _exchange(proc: asyncio.subprocess.Process, method: str, **params: Any) -> dict[str, Any]:
+    assert proc.stdin and proc.stdout
+    rpc = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    proc.stdin.write((json.dumps(rpc, ensure_ascii=False) + "\n").encode())
+    await proc.stdin.drain()
+    response = json.loads(await asyncio.wait_for(proc.stdout.readline(), timeout=20))
+    return cast("dict[str, Any]", response["result"])
 
 
-class TestExtractColorsWrapper:
-    """Tests for the extract_colors wrapper."""
+async def _initialize(proc: asyncio.subprocess.Process) -> None:
+    init = await _exchange(
+        proc,
+        "initialize",
+        protocolVersion="2025-11-25",
+        capabilities={},
+        clientInfo={"name": "test", "version": "1"},
+    )
+    assert init["serverInfo"]["name"] == "vision-tools"
+    assert proc.stdin
+    proc.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
+    definitions = {
+        tool["name"]: tool["inputSchema"] for tool in (await _exchange(proc, "tools/list"))["tools"]
+    }
+    assert set(definitions) == {
+        "get_image_coordinates_grid",
+        "crop_to_magnify_image",
+        "extract_colors",
+        "check_contrast",
+    }
+    assert definitions["crop_to_magnify_image"]["properties"]["x1"]["type"] == "number"
+    assert definitions["crop_to_magnify_image"]["properties"]["show_grid"]["type"] == "boolean"
+    assert definitions["crop_to_magnify_image"]["properties"]["show_detail"]["type"] == "boolean"
 
-    def test_returns_serializable_dict(self, synthetic_image: Path) -> None:
-        from tools.colors import extract_colors
 
-        result = extract_colors(str(synthetic_image), n_colors=2)
-        serialized = json.dumps(result)
-        parsed = json.loads(serialized)
-        assert "colors" in parsed
-        assert len(parsed["colors"]) == 2
+async def _check_detail_view(proc: asyncio.subprocess.Process, temp: Path) -> None:
+    # The narrow top of the target has nearly the same brightness as the background.
+    image = Image.new("RGB", (37, 41))
+    for x in range(image.width):
+        gray = 35 + x * 5
+        image.paste((gray, gray, gray), (x, 0, x + 1, image.height))
+    image.paste((120, 103, 80), (12, 16, 23, 27))
+    image.paste((116, 108, 108), (16, 10, 17, 16))
+    path = temp / "faint.png"
+    image.save(path)
+    result = await _exchange(
+        proc,
+        "tools/call",
+        name="crop_to_magnify_image",
+        arguments={
+            "image_path": str(path),
+            "x1": 12 / 37,
+            "y1": 12 / 41,
+            "x2": 23 / 37,
+            "y2": 27 / 41,
+            "padding": 20,
+            "show_detail": True,
+        },
+    )
+    metadata, natural, enhanced = result["content"]
+    info = json.loads(metadata["text"])
+    with (
+        Image.open(info["output_path"]) as raw,
+        Image.open(io.BytesIO(base64.b64decode(natural["data"]))) as first,
+        Image.open(io.BytesIO(base64.b64decode(enhanced["data"]))) as second,
+        Image.open(info["detail_image"]) as detail,
+    ):
+        assert raw.tobytes() == image.tobytes()
+        assert first.size == second.size and detail.tobytes() == second.tobytes()
+        left, top = (first.width - 8 * image.width) // 2, (first.height - 8 * image.height) // 2
+        tip = (left + 16 * 8, top + 10 * 8)
+        above = (tip[0], tip[1] - 1)
+        assert first.getpixel(tip) == (116, 108, 108, 255)
+        assert first.getpixel(above) == (115, 115, 115, 255)
+        assert second.getpixel((tip[0], top + 9 * 8)) == second.getpixel(above)
+        assert second.getpixel((tip[0], top + 12 * 8 - 1)) == (255, 64, 143, 255)
+        assert first.getpixel((tip[0], top + 12 * 8 - 1)) == (116, 108, 108, 255)
+        # The thin stroke crosses the proposal. Its tip has greater local contrast.
+        tip_color = cast("tuple[int, ...]", second.getpixel(tip))
+        bg_color = cast("tuple[int, ...]", second.getpixel(above))
+        assert sum(abs(a - b) for a, b in zip(tip_color, bg_color, strict=True)) > 30
 
-    def test_invalid_path_raises_value_error(self) -> None:
-        from tools.colors import extract_colors
 
-        with pytest.raises(ValueError, match="not found"):
-            extract_colors("/nonexistent/image.png")
+async def _check_wire(image: Path, temp: Path) -> None:
+    script = Path(__file__).resolve().parents[1] / "server.py"
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(script),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        env={
+            **os.environ,
+            "PYTHONIOENCODING": "ascii",
+            "TMPDIR": str(temp),
+            "TEMP": str(temp),
+            "TMP": str(temp),
+        },
+        limit=4_000_000,
+    )
+    try:
+        await _initialize(proc)
+        await _check_detail_view(proc, temp)
 
+        async def call(name: str, **kwargs: Any) -> dict[str, Any]:
+            return await _exchange(proc, "tools/call", name=name, arguments=kwargs)
 
-class TestServerWrapperPattern:
-    """Verify the server error-handling contract.
-
-    MCP server wrappers catch ValueError and Exception, returning
-    {"error": "..."} JSON instead of raising. These tests verify
-    that tool functions raise the right exceptions for the server
-    to catch.
-    """
-
-    def test_value_error_produces_error_json(self, synthetic_image: Path) -> None:
-        """Simulate what the server wrapper does on ValueError."""
-        from tools.crop import crop_image
-
+        grid = await call(
+            "get_image_coordinates_grid", image_path=str(image), measure_at=[0.15, 0.5]
+        )
+        metadata, block = grid["content"]
+        assert json.loads(metadata["text"])["measured_fill"]["bounds_px"] == [0, 0, 100, 100]
+        with Image.open(io.BytesIO(base64.b64decode(block["data"]))) as preview:
+            assert block["mimeType"] == "image/png" and preview.size == (200, 100)
+        crop = await call(
+            "crop_to_magnify_image", image_path=str(image), x1=0.25, y1=0, x2=0.75, y2=1, padding=0
+        )
+        metadata, block = crop["content"]
+        assert json.loads(metadata["text"])["width"] == 100
+        with Image.open(io.BytesIO(base64.b64decode(block["data"]))) as preview:
+            assert preview.size == (400, 400)
+            assert preview.getpixel((199, 100)) == (255, 0, 0) and preview.getpixel((200, 100)) == (
+                0,
+                0,
+                255,
+            )
+        ruled = await call(
+            "crop_to_magnify_image",
+            image_path=str(image),
+            x1=0.25,
+            y1=0,
+            x2=0.75,
+            y2=1,
+            padding=0,
+            show_grid=True,
+        )
+        metadata, block = ruled["content"]
+        with (
+            Image.open(json.loads(metadata["text"])["grid_image"]) as saved_grid,
+            Image.open(io.BytesIO(base64.b64decode(block["data"]))) as inline,
+        ):
+            assert inline.tobytes() == saved_grid.tobytes()
+        colors = await call("extract_colors", image_path=str(image), n_colors=2)
+        assert {
+            c["hex"]: c["percentage"] for c in json.loads(colors["content"][0]["text"])["colors"]
+        } == {"#FF0000": 50, "#0000FF": 50}
+        error = await call("get_image_coordinates_grid", image_path=str(temp / "missing.png"))
+        assert error["isError"] and "not found" in json.loads(error["content"][0]["text"])["error"]
+        contrast = await call("check_contrast", foreground="#000000", background="#FFFFFF")
+        assert json.loads(contrast["content"][0]["text"])["contrast_ratio"] == 21
+    finally:
+        assert proc.stdin
+        proc.stdin.close()
         try:
-            crop_image(str(synthetic_image), 0.8, 0.0, 0.2, 1.0)
-            pytest.fail("Expected ValueError")
-        except ValueError as e:
-            error_json = json.dumps({"error": str(e)})
-            parsed = json.loads(error_json)
-            assert "error" in parsed
-            assert "must be less than" in parsed["error"]
-
-    def test_corrupted_image_produces_value_error(self, tmp_path: Path) -> None:
-        """A file with image extension but invalid content raises ValueError."""
-        bad_file = tmp_path / "bad.png"
-        bad_file.write_bytes(b"this is not a PNG")
-        from tools.crop import image_info
-
-        with pytest.raises(ValueError, match="Could not open image"):
-            image_info(str(bad_file))
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
 
 
-def _mcp_result_text(result: object) -> str:
-    """Extract the JSON text from a FastMCP call_tool result.
-
-    call_tool returns (list[TextContent], dict). The first TextContent
-    block contains the JSON string returned by the tool wrapper.
-    """
-    content_blocks = result[0]  # type: ignore[index]
-    return str(content_blocks[0].text)
+def test_host_lists_and_calls_every_tool(synthetic_image: Path, tmp_path: Path) -> None:
+    asyncio.run(_check_wire(synthetic_image.rename(tmp_path / "visión-画面.png"), tmp_path))
 
 
-class TestMCPWiring:
-    """Tests that verify the actual MCP server layer — tool registration,
-    invocation through FastMCP, and JSON serialization."""
+def test_unexpected_failure_is_sanitized() -> None:
+    def broken() -> dict[str, str]:
+        raise RuntimeError("private implementation detail")
 
-    @pytest.fixture()  # type: ignore[untyped-decorator]
-    def mcp(self) -> FastMCP:
-        """Create a FastMCP instance with all tools registered."""
-        server = FastMCP(name="test-vision-tools")
-        _register_image_tools(server)
-        _register_color_tools(server)
-        return server
-
-    def test_all_four_tools_registered(self, mcp: FastMCP, synthetic_image: Path) -> None:
-        """Verify all expected tools are registered by calling each through the public API."""
-        expected_tools = {
-            "get_image_coordinates_grid": {"image_path": str(synthetic_image)},
-            "crop_to_magnify_image": {
-                "image_path": str(synthetic_image),
-                "x1": 0.0,
-                "y1": 0.0,
-                "x2": 1.0,
-                "y2": 1.0,
-                "padding": 0,
-            },
-            "extract_colors": {"image_path": str(synthetic_image), "n_colors": 2},
-            "check_contrast": {"foreground": "#FFFFFF", "background": "#000000"},
-        }
-        for name, args in expected_tools.items():
-            result = asyncio.run(mcp.call_tool(name, args))
-            parsed = json.loads(_mcp_result_text(result))
-            assert "error" not in parsed, f"Tool '{name}' returned error: {parsed.get('error')}"
-
-    def test_registration_rejects_non_fastmcp(self) -> None:
-        with pytest.raises(TypeError, match="Expected FastMCP"):
-            _register_image_tools("not a FastMCP")
-
-    def test_image_info_returns_json_via_mcp(self, mcp: FastMCP, synthetic_image: Path) -> None:
-        result = asyncio.run(
-            mcp.call_tool(
-                "get_image_coordinates_grid",
-                {"image_path": str(synthetic_image)},
-            )
-        )
-        parsed = json.loads(_mcp_result_text(result))
-        assert parsed["width"] == 200
-        assert parsed["height"] == 100
-        assert "grid_image" in parsed
-
-    def test_crop_returns_json_via_mcp(self, mcp: FastMCP, synthetic_image: Path) -> None:
-        result = asyncio.run(
-            mcp.call_tool(
-                "crop_to_magnify_image",
-                {
-                    "image_path": str(synthetic_image),
-                    "x1": 0.0,
-                    "y1": 0.0,
-                    "x2": 0.5,
-                    "y2": 1.0,
-                    "padding": 0,
-                },
-            )
-        )
-        parsed = json.loads(_mcp_result_text(result))
-        assert parsed["width"] == 100
-        assert parsed["height"] == 100
-        assert Path(parsed["output_path"]).exists()
-
-    def test_extract_colors_returns_json_via_mcp(self, mcp: FastMCP, synthetic_image: Path) -> None:
-        result = asyncio.run(
-            mcp.call_tool(
-                "extract_colors",
-                {"image_path": str(synthetic_image), "n_colors": 2},
-            )
-        )
-        parsed = json.loads(_mcp_result_text(result))
-        hexes = {c["hex"] for c in parsed["colors"]}
-        assert "#FF0000" in hexes
-        assert "#0000FF" in hexes
-
-    def test_check_contrast_returns_json_via_mcp(self, mcp: FastMCP) -> None:
-        result = asyncio.run(
-            mcp.call_tool(
-                "check_contrast",
-                {"foreground": "#FFFFFF", "background": "#000000"},
-            )
-        )
-        parsed = json.loads(_mcp_result_text(result))
-        assert parsed["contrast_ratio"] == 21.0
-        assert parsed["wcag_aa"] is True
-
-    def test_invalid_input_returns_error_json_via_mcp(self, mcp: FastMCP) -> None:
-        """Invalid path should return error JSON, not raise."""
-        result = asyncio.run(
-            mcp.call_tool(
-                "get_image_coordinates_grid",
-                {"image_path": "/nonexistent/image.png"},
-            )
-        )
-        parsed = json.loads(_mcp_result_text(result))
-        assert "error" in parsed
-        assert "not found" in parsed["error"]
-
-    def test_invalid_contrast_returns_error_json_via_mcp(self, mcp: FastMCP) -> None:
-        result = asyncio.run(
-            mcp.call_tool(
-                "check_contrast",
-                {"foreground": "not-a-color", "background": "#000000"},
-            )
-        )
-        parsed = json.loads(_mcp_result_text(result))
-        assert "error" in parsed
-        assert "Invalid hex color" in parsed["error"]
-
-
-class TestRunToolErrorSanitization:
-    """Tests that _run_tool sanitizes unexpected exception details."""
-
-    def test_value_error_preserves_message(self) -> None:
-        def failing_tool() -> None:
-            raise ValueError("helpful user message")
-
-        result = json.loads(_run_tool("test_tool", failing_tool))
-        assert result["error"] == "helpful user message"
-
-    def test_unexpected_error_is_sanitized(self) -> None:
-        def crashing_tool() -> None:
-            raise RuntimeError("internal traceback detail at /secret/path")
-
-        result = json.loads(_run_tool("test_tool", crashing_tool))
-        assert "internal traceback" not in result["error"]
-        assert "/secret/path" not in result["error"]
-        assert result["error"] == "Internal error in test_tool. Check logs."
-
-
-class TestMain:
-    """Tests for the main() entry point."""
-
-    def test_setup_flag_calls_execv(self, tmp_path: Path) -> None:
-        script = tmp_path / "setup.sh"
-        script.touch()
-        # os.execv replaces the process; mock raises OSError to stop fallthrough
-        with (
-            patch("sys.argv", ["server.py", "--setup"]),
-            patch("server.SETUP_SCRIPT", script),
-            patch("os.execv", side_effect=OSError("mock execv")) as mock_execv,
-            pytest.raises(OSError, match="mock execv"),
-        ):
-            main()
-        mock_execv.assert_called_once()
-        assert mock_execv.call_args[0][0] == "/bin/bash"
-        assert str(script) in mock_execv.call_args[0][1]
-
-    def test_setup_flag_exits_when_script_missing(self, tmp_path: Path) -> None:
-        missing = tmp_path / "nonexistent.sh"
-        with (
-            patch("sys.argv", ["server.py", "--setup"]),
-            patch("server.SETUP_SCRIPT", missing),
-            pytest.raises(SystemExit, match="1"),
-        ):
-            main()
-
-    def test_normal_startup_calls_ensure_and_start(self) -> None:
-        with (
-            patch("sys.argv", ["server.py"]),
-            patch("server.ensure_dependencies"),
-            patch("server._start_server") as mock_start,
-        ):
-            main()
-            mock_start.assert_called_once()
+    response = _tool_result(broken)()
+    assert response["isError"]
+    assert (
+        json.loads(response["content"][0]["text"])["error"]
+        == "Internal error in broken. Check logs."
+    )

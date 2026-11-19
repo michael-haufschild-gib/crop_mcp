@@ -1,0 +1,83 @@
+{
+  "train": {
+    "description": "the illustrated Mountain Pass railway ticket",
+    "at": [
+      74,
+      424
+    ],
+    "width": 151,
+    "split": "development"
+  },
+  "ruins": {
+    "description": "the dropped brass skeleton key on the stone ground, including the teeth and bow",
+    "at": [
+      721,
+      626
+    ],
+    "width": 82,
+    "split": "development"
+  },
+  "studio": {
+    "description": "the entire eyedropper cursor over the photograph, from bulb to tip",
+    "at": [
+      957,
+      537
+    ],
+    "width": 39,
+    "split": "development"
+  },
+  "market": {
+    "description": "the open brass compass next to the backpack, including its hinged lid",
+    "at": [
+      843,
+      478
+    ],
+    "width": 74,
+    "split": "holdout"
+  },
+  "station": {
+    "description": "the orange maintenance drone in the hangar, including its rotor guards",
+    "at": [
+      1031,
+      352
+    ],
+    "width": 117,
+    "split": "holdout"
+  },
+  "maps": {
+    "description": "the italic Col des Aiguilles map label, including its narrow lettering outline",
+    "at": [
+      1048,
+      361
+    ],
+    "width": 128,
+    "split": "holdout"
+  },
+  "delivery": {
+    "description": "the red Chef’s pick menu stamp, including its oval border",
+    "at": [
+      505,
+      1290
+    ],
+    "width": 112,
+    "split": "holdout"
+  },
+  "canopy": {
+    "description": "the pale green luna moth above the bridge, including its antennae and wing tails",
+    "at": [
+      590,
+      355
+    ],
+    "width": 63,
+    "split": "holdout"
+  },
+  "rally": {
+    "description": "the yellow roadside course marshal flag, including the pole",
+    "at": [
+      784,
+      303
+    ],
+    "width": 42,
+    "split": "holdout"
+  }
+}

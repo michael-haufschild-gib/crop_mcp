@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
-from unittest.mock import patch
+from typing import cast
 
 from PIL import Image
 
-from tools.grid import CYAN, YELLOW, render_grid
+from tools.grid import CYAN, YELLOW, render_crop_rulers, render_grid
 
 
 def _color_distance(c1: tuple[int, ...], c2: tuple[int, int, int]) -> float:
     """Euclidean distance between two RGB colors (ignoring alpha)."""
-    return float(sum((a - b) ** 2 for a, b in zip(c1[:3], c2)) ** 0.5)
+    return float(sum((a - b) ** 2 for a, b in zip(c1[:3], c2, strict=True)) ** 0.5)
+
+
+def _pixel_tuple(img: Image.Image, xy: tuple[int, int]) -> tuple[int, ...]:
+    """Return a pixel as a tuple for RGB/RGBA test images."""
+    return cast("tuple[int, ...]", img.getpixel(xy))
 
 
 class TestGridRendering:
@@ -37,7 +42,7 @@ class TestGridRendering:
         # Sample pixel at the .5 gridline, middle of image
         x = int(0.5 * 400)
         y = 400 // 2
-        pixel = grid_img.getpixel((x, y))
+        pixel = _pixel_tuple(grid_img, (x, y))
         # Should be closer to yellow than to cyan or magenta
         dist_yellow = _color_distance(pixel, YELLOW)
         dist_cyan = _color_distance(pixel, CYAN)
@@ -55,7 +60,7 @@ class TestGridRendering:
         x = int(0.1 * 400)
         # Use y=28 (0.07) to avoid crossing any horizontal gridline
         y = int(0.07 * 400)
-        pixel = grid_img.getpixel((x, y))
+        pixel = _pixel_tuple(grid_img, (x, y))
         dist_cyan = _color_distance(pixel, CYAN)
         dist_yellow = _color_distance(pixel, YELLOW)
         assert dist_cyan < dist_yellow, f"Non-midpoint pixel {pixel} not cyan-ish"
@@ -72,24 +77,28 @@ class TestGridRendering:
         x = int(0.05 * 400)
         # Use y=28 (0.07) to avoid crossing any horizontal gridline
         y = int(0.07 * 400)
-        pixel = grid_img.getpixel((x, y))
+        pixel = _pixel_tuple(grid_img, (x, y))
         # Background is gray; magenta overlay should shift R and B channels up
         # relative to a non-gridline pixel
-        bg_pixel = grid_img.getpixel((int(0.07 * 400), y))
+        bg_pixel = _pixel_tuple(grid_img, (int(0.07 * 400), y))
         assert pixel[0] > bg_pixel[0] or pixel[2] > bg_pixel[2], (
             f"Minor gridline pixel {pixel} shows no magenta shift vs background {bg_pixel}"
         )
 
-    def test_font_fallback_does_not_crash(
-        self,
-        solid_color_image: Callable[[tuple[int, int, int], tuple[int, int]], Path],
-    ) -> None:
-        """When no system fonts exist, _get_font falls back to default."""
-        path = solid_color_image((128, 128, 128), (200, 200))
-        img = Image.open(path)
-        with patch("tools.grid._FONT_PATHS", ["/nonexistent/font.ttf"]):
-            grid_path = render_grid(img, str(path))
-            assert Path(grid_path).exists()
+    def test_zoom_grid_tracks_source_offset(self, tmp_path: Path) -> None:
+        img = Image.new("RGB", (120, 60), (80, 80, 80))
+        # Put one bright source pixel at absolute (500, 250).
+        img.putpixel((500 - 473, 250 - 241), (22, 177, 93))
+        path = render_crop_rulers(img, str(tmp_path / "frame.png"), (473, 241), (1000, 500))
+        with Image.open(path) as grid:
+            left, top = (grid.width - 120 * 8) // 2, (grid.height - 60 * 8) // 2
+            x, y = left + (500 - 473) * 8, top + (250 - 241) * 8
+            assert _pixel_tuple(grid, (x, top - 6))[:3] == (239, 239, 239)
+            assert _pixel_tuple(grid, (left - 6, y))[:3] == (239, 239, 239)
+            assert _pixel_tuple(grid, (x + 1, top - 6))[:3] != (239, 239, 239)
+            center = grid.crop((left, top, grid.width - left, grid.height - top))
+            expected = img.resize(center.size, Image.Resampling.NEAREST)
+            assert center.convert("RGB").tobytes() == expected.tobytes()
 
     def test_deterministic_output(
         self,

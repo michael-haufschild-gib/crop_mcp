@@ -15,7 +15,7 @@ Violations are code review rejections. No exceptions.
 
 1. `__future__` imports
 2. Standard library (`os`, `sys`, `pathlib`)
-3. Third-party (`PIL`, `numpy`, `mcp`)
+3. Third-party (`PIL`, `numpy`, `pymcp`)
 4. Local (`from .validators import ...`, `from tools.crop import ...`)
 
 Blank line between each group.
@@ -40,5 +40,5 @@ Blank line between each group.
 ## Return Values
 
 - Tool implementation functions return `dict`.
-- MCP-registered tool functions return `str` (JSON-serialized).
+- The server wraps each result in an MCP text block containing JSON and attaches an image block for visual tools.
 - Include enough context for the caller to take the next action (e.g., `output_path` so Claude can read the file).

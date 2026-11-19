@@ -1,235 +1,62 @@
-"""Tests for bootstrap.py — dependency checking, auto-setup, and venv relaunching."""
+"""The host chooses the interpreter. Checkout installation reserves stdout for MCP."""
 
-from __future__ import annotations
-
+import sys
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
-
-from bootstrap import (
-    _auto_setup,
-    _check_dependencies,
-    _in_correct_venv,
-    _relaunch_in_venv,
-    ensure_dependencies,
-)
+from bootstrap import ensure_dependencies, setup_environment
+from server import main
 
 
-class TestCheckDependencies:
-    """Tests for _check_dependencies."""
-
-    def test_returns_none_when_all_present(self) -> None:
-        # All three packages are installed in the test venv
-        assert _check_dependencies() is None
-
-    def test_returns_message_when_mcp_missing(self) -> None:
-        import builtins
-
-        original_import = builtins.__import__
-
-        def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name == "mcp":
-                raise ImportError("mocked")
-            return original_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", side_effect=mock_import):
-            result = _check_dependencies()
-            assert result is not None
-            assert "mcp" in result
-            assert "Missing packages" in result
+def test_host_with_dependencies_starts_without_install_or_reexec() -> None:
+    with (
+        patch("bootstrap.setup_environment") as install,
+        patch("os.execv") as reexec,
+        patch("server._start_server") as start,
+        patch("sys.argv", ["server.py"]),
+    ):
+        main()
+    install.assert_not_called()
+    reexec.assert_not_called()
+    start.assert_called_once()
 
 
-class TestAutoSetup:
-    """Tests for _auto_setup."""
-
-    def test_returns_false_when_venv_exists(self, tmp_path: Path) -> None:
-        venv = tmp_path / "venv"
-        venv.mkdir()
-        python = venv / "bin" / "python3"
-        python.parent.mkdir(parents=True)
-        python.touch()
-
-        with patch("bootstrap.VENV_DIR", venv), patch("bootstrap.VENV_PYTHON", python):
-            assert _auto_setup() is False
-
-    def test_returns_false_when_setup_script_missing(self, tmp_path: Path) -> None:
-        venv = tmp_path / "nonexistent-venv"
-        python = venv / "bin" / "python3"
-        script = tmp_path / "nonexistent-setup.sh"
-
-        with (
-            patch("bootstrap.VENV_DIR", venv),
-            patch("bootstrap.VENV_PYTHON", python),
-            patch("bootstrap.SETUP_SCRIPT", script),
-        ):
-            assert _auto_setup() is False
-
-    def test_returns_true_on_successful_setup(self, tmp_path: Path) -> None:
-        venv = tmp_path / "nonexistent-venv"
-        python = venv / "bin" / "python3"
-        script = tmp_path / "setup.sh"
-        script.write_text("#!/bin/bash\nexit 0\n")
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-
-        with (
-            patch("bootstrap.VENV_DIR", venv),
-            patch("bootstrap.VENV_PYTHON", python),
-            patch("bootstrap.SETUP_SCRIPT", script),
-            patch("subprocess.run", return_value=mock_result) as mock_run,
-        ):
-            assert _auto_setup() is True
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args
-            assert call_args[0][0] == ["bash", str(script)]
-            assert call_args[1]["timeout"] == 120
-
-    def test_returns_false_on_failed_setup(self, tmp_path: Path) -> None:
-        venv = tmp_path / "nonexistent-venv"
-        python = venv / "bin" / "python3"
-        script = tmp_path / "setup.sh"
-        script.write_text("#!/bin/bash\nexit 1\n")
-
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "setup failed"
-
-        with (
-            patch("bootstrap.VENV_DIR", venv),
-            patch("bootstrap.VENV_PYTHON", python),
-            patch("bootstrap.SETUP_SCRIPT", script),
-            patch("subprocess.run", return_value=mock_result),
-        ):
-            assert _auto_setup() is False
-
-    def test_returns_false_on_subprocess_exception(self, tmp_path: Path) -> None:
-        venv = tmp_path / "nonexistent-venv"
-        python = venv / "bin" / "python3"
-        script = tmp_path / "setup.sh"
-        script.write_text("#!/bin/bash\nexit 0\n")
-
-        with (
-            patch("bootstrap.VENV_DIR", venv),
-            patch("bootstrap.VENV_PYTHON", python),
-            patch("bootstrap.SETUP_SCRIPT", script),
-            patch("subprocess.run", side_effect=OSError("exec failed")),
-        ):
-            assert _auto_setup() is False
+def test_checkout_with_existing_environment_reuses_its_interpreter(tmp_path: Path) -> None:
+    python = tmp_path / "python"
+    python.touch()
+    with (
+        patch("bootstrap.find_spec", return_value=None),
+        patch("bootstrap.VENV_PYTHON", python),
+        patch("bootstrap.VENV_DIR", tmp_path),
+        patch("bootstrap.setup_environment") as install,
+        patch("os.execv") as reexec,
+        patch("sys.argv", ["server.py"]),
+    ):
+        ensure_dependencies()
+    reexec.assert_called_once_with(str(python), [str(python), "server.py"])
+    install.assert_not_called()
 
 
-class TestInCorrectVenv:
-    """Tests for _in_correct_venv — checks against the specific project venv."""
-
-    def test_true_when_prefix_matches_venv_dir(self, tmp_path: Path) -> None:
-        venv = tmp_path / "correct-venv"
-        venv.mkdir()
-        with patch("sys.prefix", str(venv)), patch("bootstrap.VENV_DIR", venv):
-            assert _in_correct_venv() is True
-
-    def test_false_when_prefix_is_different_venv(self, tmp_path: Path) -> None:
-        wrong_venv = tmp_path / "wrong-venv"
-        wrong_venv.mkdir()
-        correct_venv = tmp_path / "correct-venv"
-        correct_venv.mkdir()
-        with patch("sys.prefix", str(wrong_venv)), patch("bootstrap.VENV_DIR", correct_venv):
-            assert _in_correct_venv() is False
-
-    def test_false_when_not_in_any_venv(self, tmp_path: Path) -> None:
-        correct_venv = tmp_path / "correct-venv"
-        correct_venv.mkdir()
-        with patch("sys.prefix", "/usr"), patch("bootstrap.VENV_DIR", correct_venv):
-            assert _in_correct_venv() is False
+def test_first_checkout_install_uses_lock_and_keeps_stdout_clean(tmp_path: Path) -> None:
+    with (
+        patch("bootstrap.VENV_PYTHON", tmp_path / "absent"),
+        patch("bootstrap.VENV_DIR", tmp_path),
+        patch("venv.EnvBuilder.create") as create,
+        patch("subprocess.run") as install,
+    ):
+        setup_environment()
+    create.assert_called_once_with(tmp_path)
+    command = install.call_args.args[0]
+    assert Path(command[command.index("-c") + 1]).name == "requirements.lock"
+    assert install.call_args.kwargs["stdout"] is sys.stderr
 
 
-class TestRelaunchInVenv:
-    """Tests for _relaunch_in_venv guard conditions."""
-
-    def test_noop_when_in_correct_venv(self, tmp_path: Path) -> None:
-        venv = tmp_path / "correct-venv"
-        venv.mkdir()
-        with (
-            patch("sys.prefix", str(venv)),
-            patch("bootstrap.VENV_DIR", venv),
-            patch("os.execv") as mock_execv,
-        ):
-            _relaunch_in_venv()
-            mock_execv.assert_not_called()
-
-    def test_relaunches_when_in_wrong_venv(self, tmp_path: Path) -> None:
-        wrong_venv = tmp_path / "wrong-venv"
-        wrong_venv.mkdir()
-        correct_venv = tmp_path / "correct-venv"
-        fake_python = correct_venv / "bin" / "python3"
-        fake_python.parent.mkdir(parents=True)
-        fake_python.touch()
-
-        with (
-            patch("sys.prefix", str(wrong_venv)),
-            patch("bootstrap.VENV_DIR", correct_venv),
-            patch("bootstrap.VENV_PYTHON", fake_python),
-            patch("os.execv") as mock_execv,
-        ):
-            _relaunch_in_venv()
-            mock_execv.assert_called_once()
-            assert mock_execv.call_args[0][0] == str(fake_python)
-
-    def test_noop_when_venv_python_missing(self, tmp_path: Path) -> None:
-        missing = tmp_path / "nonexistent" / "bin" / "python3"
-        with (
-            patch("bootstrap._in_correct_venv", return_value=False),
-            patch("bootstrap.VENV_PYTHON", missing),
-            patch("os.execv") as mock_execv,
-        ):
-            _relaunch_in_venv()
-            mock_execv.assert_not_called()
-
-    def test_calls_execv_when_outside_any_venv_and_python_exists(self, tmp_path: Path) -> None:
-        correct_venv = tmp_path / "correct-venv"
-        fake_python = correct_venv / "bin" / "python3"
-        fake_python.parent.mkdir(parents=True)
-        fake_python.touch()
-
-        with (
-            patch("sys.prefix", "/usr"),
-            patch("bootstrap.VENV_DIR", correct_venv),
-            patch("bootstrap.VENV_PYTHON", fake_python),
-            patch("os.execv") as mock_execv,
-        ):
-            _relaunch_in_venv()
-            mock_execv.assert_called_once()
-            assert mock_execv.call_args[0][0] == str(fake_python)
-
-
-class TestEnsureDependencies:
-    """Tests for ensure_dependencies orchestration."""
-
-    def test_exits_when_deps_missing_and_no_auto_setup(self) -> None:
-        with (
-            patch("bootstrap._relaunch_in_venv"),
-            patch("bootstrap._check_dependencies", return_value="Missing: mcp"),
-            patch("bootstrap._auto_setup", return_value=False),
-            pytest.raises(SystemExit, match="1"),
-        ):
-            ensure_dependencies()
-
-    def test_succeeds_when_deps_present(self) -> None:
-        with (
-            patch("bootstrap._relaunch_in_venv"),
-            patch("bootstrap._check_dependencies", return_value=None),
-        ):
-            # Should not raise or exit
-            ensure_dependencies()
-
-    def test_retries_after_auto_setup(self) -> None:
-        # First call: deps missing. After auto_setup: deps present.
-        check_results = iter(["Missing: mcp", None])
-
-        with (
-            patch("bootstrap._relaunch_in_venv"),
-            patch("bootstrap._check_dependencies", side_effect=lambda: next(check_results)),
-            patch("bootstrap._auto_setup", return_value=True),
-        ):
-            ensure_dependencies()
+def test_explicit_dev_setup_exits_before_serving() -> None:
+    with (
+        patch("sys.argv", ["server.py", "--setup", "--dev"]),
+        patch("server.setup_environment") as install,
+        patch("server._start_server") as start,
+    ):
+        main()
+    install.assert_called_once_with(dev=True)
+    start.assert_not_called()

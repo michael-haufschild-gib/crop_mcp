@@ -102,5 +102,14 @@ class TestValidateCoordinates:
             validate_coordinates(0.0, 0.9, 1.0, 0.1)
 
     def test_non_numeric_input(self) -> None:
-        with pytest.raises(ValueError, match="must be a number"):
+        with pytest.raises(ValueError, match="finite number"):
             validate_coordinates("a", 0.0, 1.0, 1.0)  # type: ignore[arg-type]
+
+    def test_boolean_input_rejected(self) -> None:
+        with pytest.raises(ValueError, match="finite number"):
+            validate_coordinates(True, 0.0, 1.0, 1.0)
+
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])  # type: ignore[untyped-decorator]
+    def test_non_finite_input_rejected(self, bad_value: float) -> None:
+        with pytest.raises(ValueError, match="must be finite"):
+            validate_coordinates(bad_value, 0.0, 1.0, 1.0)

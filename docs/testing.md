@@ -2,18 +2,20 @@
 
 **Purpose**: Instructions for testing tools and verifying changes.
 **Read This When**: Modifying a tool, adding a new tool, or verifying the server works.
-**Stack**: Python 3.14+, pytest, mypy --strict
+**Stack**: Python 3.12+, pytest, mypy --strict
 
 ## Test Commands
 
 | Command | Purpose |
 |-|-|
-| `make test` | Run full test suite |
+| `make lint` | Check Python code, image-tool import boundaries and test assertions |
+| `make unit-test` | Run tests outside the integration layer |
+| `make test` | Run all automated tests and enforce the existing 90% line coverage floor |
 | `make check` | Full pipeline: lint + format + typecheck + test + file length |
-| `make smoke-test` | Quick integration tests |
+| `make smoke-test` | Run the image pipeline and MCP host tests marked `integration` |
 | `make live-qa` | Generate images for live MCP QA (see below) |
-| `~/.vision-tools-env/bin/pytest tests/test_crop.py -v` | Run tests for a single module |
-| `~/.vision-tools-env/bin/mypy .` | Type-check all files (strict mode) |
+| `.vision-tools-env/bin/pytest tests/test_crop.py -v` | Run tests for a single module |
+| `.vision-tools-env/bin/mypy .` | Type-check all files (strict mode) |
 
 ## Test Layers
 
@@ -21,11 +23,19 @@ The test suite has three layers, each catching different classes of bugs:
 
 | Layer | Command | What it catches |
 |-|-|-|
-| Unit tests | `make test` | Logic errors in individual functions |
-| Integration tests | `make smoke-test` | Breakage across module boundaries |
+| Unit tests | `make unit-test` | Logic errors in individual functions and regressions in development tooling |
+| Integration tests | `make smoke-test` | Geometry or palette drift across tools, incompatible public schemas, broken stdio replies and shutdown failures |
 | Live MCP QA | `make live-qa` + checklist | MCP transport issues, tool usability from the AI consumer's perspective |
 
 Unit and integration tests run in CI. Live QA is a manual procedure run after tool changes or before releases.
+
+Pytest strict mode rejects unknown configuration and markers, duplicate parameter IDs, and unexpected passes of expected-failure tests. Mark real host and cross-tool tests with `@pytest.mark.integration`. The shared fixtures give each test its own temporary runtime root. The stdio client also starts its subprocess with a private working directory and temporary directory. [Pytest strict mode](https://docs.pytest.org/en/stable/reference/reference.html#confval-strict)
+
+### Linting a change
+
+Ruff enforces the size and complexity rules on functions, checks exception assertions and rejects blanket suppressions, unused parameters, debugger statements and runtime `assert` statements. Image operations under `tools/` cannot import the MCP protocol package, the server entry point, setup code or tests. [Ruff rules](https://docs.astral.sh/ruff/rules/)
+
+The test linter parses `test_*.py` and reports file and line numbers for placeholder tests, literal-only assertions, and standalone checks of truthiness, type, presence or nonempty length. For example, a palette test should check the expected RGB triplet and percentage. Exact empty or missing results are valid expectations. Run `python scripts/lint_tests.py tests/test_colors.py` to check one module.
 
 ## Test Structure
 
@@ -36,10 +46,12 @@ tests/
   test_crop.py             crop_image, image_info
   test_grid.py             Pixel-level grid rendering assertions
   test_colors.py           _kmeans, extract_colors
-  test_cleanup.py          cleanup_temp_dir LRU eviction
+  test_cleanup.py          Parallel hosts, retention limits, cancellation, shutdown and crash recovery
   test_contrast.py         WCAG contrast ratio, HSL/OKLCH conversions
   test_validate_region.py  _validate_region optional coordinate validation
   test_server.py           MCP wiring, JSON serialization, error handling
+  stdio_client.py          Start a real server, correlate JSON-RPC replies and verify shutdown
+  test_lint_tests.py       Check which test sources the assertion linter accepts and rejects
   test_integration.py      End-to-end pipeline: info → crop → colors
   generate_live_images.py  Generates deterministic images for live QA
   live_qa_checklist.md     Step-by-step MCP QA procedure (13 test cases)
@@ -98,7 +110,7 @@ class TestToolName:
 | Grid rendering | Pixel-level color assertions at known gridline positions |
 | Color extraction | Verify hex values match known solid-color inputs |
 | JSON serialization | Verify tool output serializes and deserializes correctly |
-| LRU eviction | Verify oldest files are removed when temp dir exceeds limit |
+| Image lifetime | Verify whole-result eviction, two live hosts sharing a cache with distinct temporary directories, cleanup on EOF and SIGTERM, and recovery after a hard kill during export |
 
 ## Live MCP QA
 

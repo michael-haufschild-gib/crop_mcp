@@ -27,10 +27,11 @@ MCP server providing `crop_to_magnify_image`, `get_image_coordinates_grid`, `ext
 | `make setup` | Create venv + install deps (safe to re-run) |
 | `make check` | Full pipeline: lint + format + typecheck + test + file length |
 | `make test` | Run pytest suite |
-| `make lint` | Run ruff check |
+| `make unit-test` | Run unit tests |
+| `make lint` | Run Ruff and the test assertion linter |
 | `make format` | Auto-format all files |
 | `make typecheck` | Run mypy (strict mode) |
-| `make smoke-test` | Quick integration tests |
+| `make smoke-test` | Run image pipeline and real stdio integration tests |
 | `make live-qa` | Generate images for live MCP QA (`tests/live_qa_checklist.md`) |
 | `make serve` | Start MCP server (stdio) |
 | `make clean` | Remove caches and build artifacts |

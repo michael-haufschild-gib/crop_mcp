@@ -67,14 +67,17 @@ class TestCropImage:
         path = tmp_path / "rgba.png"
         img.save(str(path))
         result = crop_image(str(path), 0.0, 0.0, 1.0, 1.0, padding=0)
-        assert result["width"] == 100
+        with Image.open(result["output_path"]) as output:
+            assert output.convert("RGBA").getcolors() == [(100 * 100, (255, 0, 0, 128))]
 
     def test_palette_mode_handled(self, tmp_path: Path) -> None:
-        img = Image.new("P", (100, 100))
+        img = Image.new("P", (100, 100), 1)
+        img.putpalette([0, 0, 0, 17, 34, 51])
         path = tmp_path / "palette.png"
         img.save(str(path))
         result = crop_image(str(path), 0.0, 0.0, 1.0, 1.0, padding=0)
-        assert result["width"] == 100
+        with Image.open(result["output_path"]) as output:
+            assert output.convert("RGB").getcolors() == [(100 * 100, (17, 34, 51))]
 
     def test_custom_output_path(self, synthetic_image: Path, tmp_path: Path) -> None:
         out = tmp_path / "custom_crop.png"
@@ -88,7 +91,8 @@ class TestCropImage:
             padding=0,
         )
         assert result["output_path"] == str(out)
-        assert out.exists()
+        with Image.open(out) as saved:
+            assert saved.getcolors() == [(100 * 100, (255, 0, 0))]
 
     def test_return_dict_has_all_keys(self, synthetic_image: Path) -> None:
         result = crop_image(str(synthetic_image), 0.0, 0.0, 0.5, 1.0, padding=0)
@@ -170,13 +174,13 @@ class TestImageInfo:
     def test_grid_image_exists_and_valid(self, synthetic_image: Path) -> None:
         info = image_info(str(synthetic_image))
         grid_path = Path(info["grid_image"])
-        assert grid_path.exists()
-        grid_img = Image.open(grid_path)
-        assert grid_img.size == (200, 100)
+        with Image.open(grid_path) as grid_img:
+            assert grid_img.size == (200, 100)
+            assert grid_img.format == "PNG"
 
-    def test_file_size_positive(self, synthetic_image: Path) -> None:
+    def test_file_size_in_kilobytes(self, synthetic_image: Path) -> None:
         info = image_info(str(synthetic_image))
-        assert info["file_size_kb"] > 0
+        assert info["file_size_kb"] == round(synthetic_image.stat().st_size / 1024, 1)
 
     def test_corrupted_image_raises(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.png"

@@ -2,6 +2,8 @@
 
 2026-11-19 · Codex CLI 0.167.1 · `gpt-6.2-astra` · medium reasoning effort.
 
+Historical run, 63 predictions. “Updated MCP” in these tables means the crop with source-pixel rulers tested in this experiment. The later native-height study tested additional edge-tracing variants. [Archived run data](single-target.jsonl) · [Native-height follow-up](native-height.md)
+
 At 2×, the updated MCP matched all six held-out targets exactly. Across all nine targets the mean absolute edge error was 1.42 pixels unaided, 0.61 with the previous MCP and 0.06 with the updated MCP. Native resolution remained harder for the updated MCP. It underestimated the key’s height by five pixels and the drone’s by eight.
 
 Each prediction came from a fresh Codex session given one target description and one full composite PNG. The model never saw the standalone foreground, pristine background, placement coordinates or answer key. Each pair used identical PNG bytes. The reference server used the previous fourfold zoom with normalized lines and labels drawn on the crop. The updated server puts original pixel and normalized rulers in the margins and magnifies tight crops up to eightfold.

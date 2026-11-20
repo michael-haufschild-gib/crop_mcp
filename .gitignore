@@ -8,6 +8,8 @@ dist/
 build/
 
 # Tools
+/.claude/
+/.serena/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/

@@ -48,3 +48,7 @@ Cons:
 - numpy remains a runtime dependency.
 - If a future use case requires processing images without thumbnailing (e.g., pixel-accurate color mapping), the memory profile should be re-evaluated at that time.
 - If numpy is ever removed from the test suite, this decision should be revisited since the primary blocker would be eliminated.
+
+## Implementation note (2026-11-20)
+
+The decision to retain NumPy k-means still applies. The timing, allocation estimate, helper names and test count above describe the March implementation. For current behavior, start at `_dominant_colors`. It counts small palettes exactly at source resolution and sends richer images through a thumbnail of at most 200 × 200 pixels. `_assign` keeps one nearest distance and label per sample while scanning centers. `_cluster_colors` returns the most frequent observed shade in each cluster. NumPy also serves the crop detail algorithm at runtime. [Palette code](../../tools/colors.py) · [Edge detail](../../tools/edge_detail.py) · [Palette tests](../../tests/test_colors.py)

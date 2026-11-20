@@ -1,8 +1,10 @@
 # Native screenshot height accuracy
 
+2026-11-19 · Historical follow-up to the [single-target study](single-target.md). The 72 scored predictions and the 21 development records are separate datasets.
+
 Across two blind repeats on all nine screenshots, the updated MCP reduced mean absolute height error from **1.50 to 0.89 source pixels**. The key is 63 pixels tall. Estimates changed from 58/58 to 64/58. The drone is 75 pixels tall. Estimates changed from 66/67 to 75/67. Both heights came within one pixel in the first repeat and both remained short in the second.
 
-The new crop detail view improved average height and slightly reduced average edge error. Exact boxes fell from **14/18 to 10/18**, and mean absolute width error rose from 0.11 to 0.50 pixels. Every previously exact box that lost exactness was still within one pixel on every edge. The existing natural crop and rulers remain available. The repeated boundary check is the version in the local server.
+The new crop detail view improved average height and slightly reduced average edge error. Exact boxes fell from **14/18 to 10/18**, and mean absolute width error rose from 0.11 to 0.50 pixels. Every previously exact box that lost exactness was still within one pixel on every edge. The existing natural crop and rulers remain available. “Updated MCP” here refers to the repeated-boundary variant in this experiment.
 
 ## Reproducing the misses
 
@@ -60,6 +62,6 @@ The key and drone informed the fix. These seven did not. The same scorer was use
 | Continuity check | 0.07 | 0.21 | 0.07 | 14/14 | 14/14 | 10/14 |
 | Repeated boundary check | 0.14 | 0.14 | 0.07 | 14/14 | 14/14 | 10/14 |
 
-Each condition has two measurements per screenshot. This measures repeatability on nine fixed images. The JSONL uses `unaided`, `reference`, `aided`, and `repeatable` for the four conditions in table order. It preserves the predictions and tool arguments. For each of the 18 calls to the final variant, `replayed_tip_pixels` records the source pixel locations reproduced with both the frozen test algorithm and the local implementation. [All predictions and MCP calls](native-height.jsonl) · [Original results](single-target.md)
+Each condition has two measurements per screenshot. This measures repeatability on nine fixed images. The JSONL uses `unaided`, `reference`, `aided`, and `repeatable` for the four conditions in table order. It preserves the predictions and tool arguments. For each of the 18 calls to the final variant, `replayed_tip_pixels` records the source pixel locations reproduced with both the frozen test algorithm and the implementation used for that run. [All predictions and MCP calls](native-height.jsonl) · [Original results](single-target.md)
 
-The focused crop, grid, stdio and compositor test files passed all 41 tests. Ruff passed and strict mypy reported no issues in the eight changed Python files checked. The repository-wide gate was skipped under the project’s focused-validation rule.
+The current repository retains a deterministic regression for the two original missed tips. Use it to check a code change independently of model variability. [Compositor and edge regressions](../../tests/test_composite_geometry.py)

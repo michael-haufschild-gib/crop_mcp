@@ -81,6 +81,6 @@ After a forced stop, the next server launch using the same cache removes abandon
 
 ## Development
 
-Run `make setup` on macOS or Linux, or `py -3 server.py --setup --dev` on Windows, to install the locked development dependencies. On Unix, `make lint` checks the code and test assertions. Use `make unit-test` for unit tests and `make smoke-test` for the image pipeline and live stdio protocol. CI runs the full `make check` gate. Set `LOG_LEVEL` to control stderr logging.
+Run `make setup` on macOS or Linux, or `py -3 server.py --setup --dev` on Windows, to install the locked development dependencies. On Unix, `make lint` checks the code and test assertions. Use `make unit-test` for unit tests and `make smoke-test` for the image pipeline and live stdio protocol. Run `make check` before committing. Set `LOG_LEVEL` to control stderr logging.
 
 The testing guide includes the stdio contract checks and the blind screenshot evaluation. [Testing guide](docs/testing.md)
